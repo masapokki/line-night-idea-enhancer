@@ -1,0 +1,22 @@
+{
+  "users": {
+    "Uc77ef434cb30c4be7bab3a9c24b7203b": {
+      "created_at": "2025-04-06T11:54:05.972Z"
+    }
+  },
+  "ideas": {
+    "idea_20250406_100000": {
+      "user_id": "Uc77ef434cb30c4be7bab3a9c24b7203b",
+      "content": "ラインで自動で申請書を記入できるアプリをつくりたい",
+      "created_at": "2025-04-06T11:54:05.972Z",
+      "processed": false
+    },
+    "idea_20250406_200000": {
+      "user_id": "Uc77ef434cb30c4be7bab3a9c24b7203b",
+      "content": "ラインで自動で申請書を記入できるアプリをつくりたい",
+      "created_at": "2025-04-06T12:04:31.463Z",
+      "processed": false
+    }
+  },
+  "results": {}
+}

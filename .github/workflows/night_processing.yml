@@ -1,0 +1,41 @@
+name: Night Processing
+
+on:
+  schedule:
+    - cron: '0 14 * * *'  # UTC 14:00 = JST 23:00
+  workflow_dispatch:  # 手動実行用
+
+jobs:
+  process-ideas:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install openai requests
+          
+      - name: Process ideas
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python scripts/process_ideas.py
+        
+      - name: Configure Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+      - name: Commit and push changes
+        run: |
+          git add data/
+          git commit -m "Add processed results" || echo "No changes to commit"
+          git push
