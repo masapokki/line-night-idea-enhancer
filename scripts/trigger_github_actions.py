@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 from dotenv import load_dotenv
 
@@ -22,17 +23,29 @@ headers = {
 def list_workflows():
     """ワークフローの一覧を取得"""
     url = f"{API_BASE_URL}/actions/workflows"
+    print(f"API URL: {url}")
+    
     response = requests.get(url, headers=headers)
     
+    print(f"ステータスコード: {response.status_code}")
+    print(f"レスポンスヘッダー: {json.dumps(dict(response.headers), indent=2)}")
+    
     if response.status_code == 200:
-        workflows = response.json()['workflows']
-        print("利用可能なワークフロー:")
-        for workflow in workflows:
-            print(f"ID: {workflow['id']}, 名前: {workflow['name']}, 状態: {workflow['state']}")
-        return workflows
+        response_json = response.json()
+        print(f"レスポンス全体: {json.dumps(response_json, indent=2)}")
+        
+        workflows = response_json.get('workflows', [])
+        if workflows:
+            print("利用可能なワークフロー:")
+            for workflow in workflows:
+                print(f"ID: {workflow['id']}, 名前: {workflow['name']}, 状態: {workflow['state']}")
+            return workflows
+        else:
+            print("ワークフローが見つかりませんでした")
+            return []
     else:
         print(f"ワークフロー一覧の取得に失敗しました: {response.status_code}")
-        print(response.text)
+        print(f"エラーレスポンス: {response.text}")
         return None
 
 def trigger_workflow(workflow_id, ref="master"):
@@ -79,13 +92,21 @@ def main():
     # 環境変数の確認
     if not all([GITHUB_TOKEN, GITHUB_REPO_OWNER, GITHUB_REPO_NAME]):
         print("環境変数が設定されていません。.envファイルを確認してください。")
+        print(f"GITHUB_TOKEN: {'設定済み' if GITHUB_TOKEN else '未設定'}")
+        print(f"GITHUB_REPO_OWNER: {GITHUB_REPO_OWNER or '未設定'}")
+        print(f"GITHUB_REPO_NAME: {GITHUB_REPO_NAME or '未設定'}")
         return
     
     print(f"リポジトリ: {GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}")
+    print(f"トークン: {GITHUB_TOKEN[:4]}...{GITHUB_TOKEN[-4:]}")
     
     # ワークフロー一覧の取得
     workflows = list_workflows()
+    if workflows is None:
+        return
+    
     if not workflows:
+        print("ワークフローが見つからないため、処理を終了します。")
         return
     
     # ユーザー入力
