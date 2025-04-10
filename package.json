@@ -4,8 +4,8 @@
   "description": "夜にLINEに送信されたアイデアをAIが処理し、翌朝に結果を送信するアプリケーション",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
+    "start": "node --expose-gc server.js",
+    "dev": "nodemon --expose-gc server.js",
     "tunnel": "ngrok http 3000",
     "dev:tunnel": "concurrently \"npm run dev\" \"npm run tunnel\""
   },
