@@ -16,6 +16,10 @@ const GITHUB_REPO_OWNER = process.env.GITHUB_REPO_OWNER || 'YOUR_GITHUB_USERNAME
 const GITHUB_REPO_NAME = process.env.GITHUB_REPO_NAME || 'YOUR_GITHUB_REPO_NAME';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'YOUR_OPENAI_API_KEY';
 
+// ユーザーの状態を保持するオブジェクト
+// key: userId, value: { pendingThinkingProcess: { analysis, evaluation, expansion, feasibility } }
+const userStates = {};
+
 // OpenAI APIクライアント
 const openai = new OpenAI({
   apiKey: OPENAI_API_KEY
@@ -57,6 +61,21 @@ async function replyToUser(replyToken, messages) {
   }
 }
 
+// アプリケーション起動時にデータディレクトリを作成
+function ensureDataDirectory() {
+  try {
+    const dataDir = path.join(__dirname, 'data');
+    if (!fs.existsSync(dataDir)) {
+      console.log('Creating data directory...');
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    return true;
+  } catch (error) {
+    console.error('Error creating data directory:', error);
+    return false;
+  }
+}
+
 // データベースファイルを読み込む関数
 function readDatabase() {
   try {
@@ -75,13 +94,10 @@ function readDatabase() {
 // データベースファイルを保存する関数
 function saveDatabase(database) {
   try {
-    // data ディレクトリが存在しない場合は作成
-    const dataDir = path.join(__dirname, 'data');
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
+    // データディレクトリが存在することを確認
+    ensureDataDirectory();
     
-    const dbPath = path.join(dataDir, 'database.json');
+    const dbPath = path.join(__dirname, 'data', 'database.json');
     fs.writeFileSync(dbPath, JSON.stringify(database, null, 2), 'utf8');
     return true;
   } catch (error) {
@@ -180,98 +196,141 @@ async function saveToGitHub(userId, content, enhancedResult, mindmapContent) {
   }
 }
 
+// OpenAI APIを呼び出す関数（タイムアウト付き）
+async function callOpenAI(model, messages, temperature = 0.7, maxTokens = null, timeoutMs = 30000) {
+  try {
+    // タイムアウト処理
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('API request timeout')), timeoutMs);
+    });
+    
+    // API呼び出し
+    const apiPromise = openai.chat.completions.create({
+      model: model,
+      messages: messages,
+      temperature: temperature,
+      ...(maxTokens && { max_tokens: maxTokens })
+    });
+    
+    // タイムアウトとAPI呼び出しを競争
+    const response = await Promise.race([apiPromise, timeoutPromise]);
+    return response.choices[0].message.content.trim();
+  } catch (error) {
+    console.error(`OpenAI API error: ${error.message}`);
+    if (error.message === 'API request timeout') {
+      return '処理がタイムアウトしました。より短いメッセージで再試行してください。';
+    }
+    return `APIエラーが発生しました: ${error.message}`;
+  }
+}
+
 // アイデアをブラッシュアップする関数
 async function enhanceIdea(ideaContent) {
   try {
     // ステップ1: アイデア分析
     console.log('Step 1: Analyzing idea...');
-    const analysisResponse = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
+    const analysis = await callOpenAI(
+      "gpt-4o",
+      [
         { 
           role: "system", 
-          content: "あなたはアイデアを分析するエキスパートです。提案されたアイデアの本質、目的、対象ユーザー、解決する問題を簡潔に分析してください。200字以内で要点をまとめてください。" 
+          content: "あなたはアイデアを分析するエキスパートです。提案されたアイデアの本質、目的、対象ユーザー、解決する問題を簡潔に分析してください。100字以内で要点をまとめてください。" 
         },
         { 
           role: "user", 
           content: `以下のアイデアを分析してください：\n\n${ideaContent}` 
         }
       ],
-      temperature: 0.7
-    });
-    const analysis = analysisResponse.choices[0].message.content.trim();
+      0.7,
+      200
+    );
+    
+    // メモリ解放のためのガベージコレクションを促進
+    global.gc && global.gc();
     
     // ステップ2: 強み・弱み評価
     console.log('Step 2: Evaluating strengths and weaknesses...');
-    const evaluationResponse = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
+    const evaluation = await callOpenAI(
+      "gpt-4o",
+      [
         { 
           role: "system", 
-          content: "あなたはアイデアの評価を行うエキスパートです。アイデアの強みと改善が必要な点を簡潔に特定してください。200字以内で要点をまとめてください。" 
+          content: "あなたはアイデアの評価を行うエキスパートです。アイデアの強みと改善が必要な点を簡潔に特定してください。100字以内で要点をまとめてください。" 
         },
         { 
           role: "user", 
           content: `以下のアイデアの強みと弱みを評価してください：\n\n${ideaContent}\n\n分析結果：\n${analysis}` 
         }
       ],
-      temperature: 0.7
-    });
-    const evaluation = evaluationResponse.choices[0].message.content.trim();
+      0.7,
+      200
+    );
+    
+    // メモリ解放のためのガベージコレクションを促進
+    global.gc && global.gc();
     
     // ステップ3: 拡張と発展
     console.log('Step 3: Expanding and developing the idea...');
-    const expansionResponse = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
+    const expansion = await callOpenAI(
+      "gpt-4o",
+      [
         { 
           role: "system", 
-          content: "あなたは創造的なアイデアを発展させるエキスパートです。アイデアをより具体的で実用的な形に拡張してください。200字以内で要点をまとめてください。" 
+          content: "あなたは創造的なアイデアを発展させるエキスパートです。アイデアをより具体的で実用的な形に拡張してください。100字以内で要点をまとめてください。" 
         },
         { 
           role: "user", 
           content: `以下のアイデアを拡張・発展させてください：\n\n${ideaContent}\n\n分析結果：\n${analysis}\n\n評価：\n${evaluation}` 
         }
       ],
-      temperature: 0.8
-    });
-    const expansion = expansionResponse.choices[0].message.content.trim();
+      0.7,
+      200
+    );
+    
+    // メモリ解放のためのガベージコレクションを促進
+    global.gc && global.gc();
     
     // ステップ4: 実現可能性検討
     console.log('Step 4: Assessing feasibility...');
-    const feasibilityResponse = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
+    const feasibility = await callOpenAI(
+      "gpt-4o",
+      [
         { 
           role: "system", 
-          content: "あなたは実現可能性を評価するエキスパートです。アイデアの技術的・経済的な実現可能性を簡潔に検討してください。200字以内で要点をまとめてください。" 
+          content: "あなたは実現可能性を評価するエキスパートです。アイデアの技術的・経済的な実現可能性を簡潔に検討してください。100字以内で要点をまとめてください。" 
         },
         { 
           role: "user", 
           content: `以下のアイデアの実現可能性を評価してください：\n\n${ideaContent}\n\n拡張案：\n${expansion}` 
         }
       ],
-      temperature: 0.7
-    });
-    const feasibility = feasibilityResponse.choices[0].message.content.trim();
+      0.7,
+      200
+    );
+    
+    // メモリ解放のためのガベージコレクションを促進
+    global.gc && global.gc();
     
     // ステップ5: 最終ブラッシュアップ
     console.log('Step 5: Creating final enhanced version...');
-    const finalResponse = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
+    const finalEnhancement = await callOpenAI(
+      "gpt-4o",
+      [
         { 
           role: "system", 
-          content: "あなたは創造的なアイデアを最終的にブラッシュアップするエキスパートです。これまでの分析と評価を統合して、最終的なブラッシュアップ案を作成してください。" 
+          content: "あなたは創造的なアイデアを最終的にブラッシュアップするエキスパートです。これまでの分析と評価を統合して、最終的なブラッシュアップ案を作成してください。300字以内にまとめてください。" 
         },
         { 
           role: "user", 
           content: `以下のアイデアの最終ブラッシュアップ案を作成してください：\n\n元のアイデア：\n${ideaContent}\n\n分析：\n${analysis}\n\n評価：\n${evaluation}\n\n拡張案：\n${expansion}\n\n実現可能性：\n${feasibility}` 
         }
       ],
-      temperature: 0.7
-    });
-    const finalEnhancement = finalResponse.choices[0].message.content.trim();
+      0.7,
+      500
+    );
+    
+    // メモリ解放のためのガベージコレクションを促進
+    global.gc && global.gc();
     
     // 思考プロセス全体を含む結果を返す
     return {
@@ -284,7 +343,12 @@ async function enhanceIdea(ideaContent) {
   } catch (error) {
     console.error('Error enhancing idea:', error);
     return {
-      error: `アイデアの処理中にエラーが発生しました。エラー: ${error.message}`
+      error: `アイデアの処理中にエラーが発生しました。エラー: ${error.message}`,
+      analysis: 'エラーが発生しました',
+      evaluation: 'エラーが発生しました',
+      expansion: 'エラーが発生しました',
+      feasibility: 'エラーが発生しました',
+      finalEnhancement: `アイデアの処理中にエラーが発生しました。しばらくしてからもう一度お試しください。エラー: ${error.message}`
     };
   }
 }
@@ -292,17 +356,26 @@ async function enhanceIdea(ideaContent) {
 // マインドマップを生成する関数
 async function generateMindmap(ideaContent) {
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        { role: "system", content: "あなたはアイデアからテキスト形式のマインドマップを作成するアシスタントです。中心となるアイデアから派生する概念を階層的に表現してください。" },
-        { role: "user", content: `以下のアイデアからテキスト形式のマインドマップを作成してください。階層はインデントで表現し、各項目の前には記号（例：*、-、+など）を付けてください：\n\n${ideaContent}` }
+    const mindmap = await callOpenAI(
+      "gpt-4o",
+      [
+        { 
+          role: "system", 
+          content: "あなたはアイデアからテキスト形式のマインドマップを作成するアシスタントです。中心となるアイデアから派生する概念を階層的に表現してください。簡潔に作成してください。" 
+        },
+        { 
+          role: "user", 
+          content: `以下のアイデアからテキスト形式のマインドマップを作成してください。階層はインデントで表現し、各項目の前には記号（例：*、-、+など）を付けてください：\n\n${ideaContent}` 
+        }
       ],
-      max_tokens: 1500,
-      temperature: 0.7
-    });
+      0.7,
+      800
+    );
     
-    return response.choices[0].message.content.trim();
+    // メモリ解放のためのガベージコレクションを促進
+    global.gc && global.gc();
+    
+    return mindmap;
   } catch (error) {
     console.error('Error generating mindmap:', error);
     return `マインドマップの生成中にエラーが発生しました。エラー: ${error.message}`;
@@ -342,6 +415,41 @@ app.post('/webhook', async (req, res) => {
         
         console.log(`Received message from ${userId}: ${messageText}`);
         
+        // 「詳細を見る」というメッセージを受け取った場合
+        if (messageText === '詳細を見る' && userStates[userId] && userStates[userId].pendingThinkingProcess) {
+          console.log('Sending thinking process details...');
+          
+          const thinkingProcess = userStates[userId].pendingThinkingProcess;
+          
+          // 思考プロセスを送信
+          await replyToUser(replyToken, [
+            {
+              type: 'text',
+              text: `【思考プロセス 1/2】\n\n1️⃣ アイデア分析:\n${thinkingProcess.analysis}\n\n2️⃣ 強み・弱み評価:\n${thinkingProcess.evaluation}`
+            }
+          ]);
+          
+          // 2つ目のメッセージは別途送信
+          await axios.post('https://api.line.me/v2/bot/message/push', {
+            to: userId,
+            messages: [
+              {
+                type: 'text',
+                text: `【思考プロセス 2/2】\n\n3️⃣ 拡張と発展:\n${thinkingProcess.expansion}\n\n4️⃣ 実現可能性:\n${thinkingProcess.feasibility}`
+              }
+            ]
+          }, {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+            }
+          });
+          
+          console.log('Thinking process details sent successfully');
+          return;
+        }
+        
+        // 通常のアイデア処理
         // 処理中メッセージを送信
         await replyToUser(replyToken, [{
           type: 'text',
@@ -364,7 +472,7 @@ app.post('/webhook', async (req, res) => {
           // 結果をLINEで送信
           console.log('Sending results to LINE...');
           
-          // メッセージを作成（元のアイデア、最終ブラッシュアップ、マインドマップ、思考プロセスの順）
+          // メッセージを作成（元のアイデア、最終ブラッシュアップ、マインドマップの順）
           const messages = [
             {
               type: 'text',
@@ -384,16 +492,21 @@ app.post('/webhook', async (req, res) => {
             text: `【マインドマップ】\n${mindmapContent}`
           });
           
-          // 思考プロセスを最後に送信
+          // 詳細を見るオプションを追加
           messages.push({
             type: 'text',
-            text: `【思考プロセス 1/2】\n\n1️⃣ アイデア分析:\n${enhancedResult.analysis}\n\n2️⃣ 強み・弱み評価:\n${enhancedResult.evaluation}`
+            text: '思考プロセスの詳細を見るには「詳細を見る」と送信してください。'
           });
           
-          messages.push({
-            type: 'text',
-            text: `【思考プロセス 2/2】\n\n3️⃣ 拡張と発展:\n${enhancedResult.expansion}\n\n4️⃣ 実現可能性:\n${enhancedResult.feasibility}`
-          });
+          // ユーザーの状態を保存（思考プロセスを保持）
+          userStates[userId] = {
+            pendingThinkingProcess: {
+              analysis: enhancedResult.analysis,
+              evaluation: enhancedResult.evaluation,
+              expansion: enhancedResult.expansion,
+              feasibility: enhancedResult.feasibility
+            }
+          };
           
           await axios.post('https://api.line.me/v2/bot/message/push', {
             to: userId,
@@ -436,6 +549,53 @@ app.post('/webhook', async (req, res) => {
 // ヘルスチェックエンドポイント
 app.get('/', (req, res) => {
   res.send('LINE Night Idea Enhancer is running!');
+});
+
+// サーバー起動
+ensureDataDirectory();
+
+// メモリ使用量の監視と制限
+const MAX_MEMORY_MB = 450; // 最大メモリ使用量（MB）
+const MEMORY_CHECK_INTERVAL = 30000; // メモリチェック間隔（ミリ秒）
+
+// メモリ使用量の監視
+const memoryMonitor = setInterval(() => {
+  const memoryUsage = process.memoryUsage();
+  const usedMemoryMB = Math.round(memoryUsage.rss / 1024 / 1024);
+  
+  console.log('Memory usage:');
+  console.log(`  RSS: ${usedMemoryMB} MB`);
+  console.log(`  Heap total: ${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`);
+  console.log(`  Heap used: ${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB`);
+  
+  // メモリ使用量が閾値を超えた場合、ガベージコレクションを強制的に実行
+  if (usedMemoryMB > MAX_MEMORY_MB) {
+    console.log(`Memory usage exceeded ${MAX_MEMORY_MB} MB. Forcing garbage collection...`);
+    global.gc && global.gc();
+    
+    // ユーザー状態の一部をクリア（古いデータを削除）
+    const userIds = Object.keys(userStates);
+    if (userIds.length > 10) {
+      console.log('Clearing old user states...');
+      // 最も古い半分のユーザー状態を削除
+      userIds.slice(0, Math.floor(userIds.length / 2)).forEach(id => {
+        delete userStates[id];
+      });
+    }
+  }
+}, MEMORY_CHECK_INTERVAL);
+
+// プロセス終了時にインターバルをクリア
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, cleaning up...');
+  clearInterval(memoryMonitor);
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, cleaning up...');
+  clearInterval(memoryMonitor);
+  process.exit(0);
 });
 
 // サーバー起動
