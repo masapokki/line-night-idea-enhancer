@@ -402,22 +402,63 @@ async function sendMindmapImageToLine(userId, imagePath) {
 }
 
 // マインドマップを生成する関数
-async function generateMindmap(ideaContent) {
+async function generateMindmap(ideaContent, enhancedResult = null) {
   try {
+    // enhancedResultが提供されている場合は、それを使用してマインドマップを生成
+    const messages = [];
+    
+    // システムプロンプト
+    messages.push({ 
+      role: "system", 
+      content: `あなたはアイデアからテキスト形式のマインドマップを作成するアシスタントです。
+以下のルールに従って作成してください：
+1. 中心となるアイデアから派生する最も重要な概念のみを抽出する
+2. 階層は最大3階層までとする（中心アイデア→主要カテゴリ→詳細項目）
+3. 各階層の項目数は3〜5個程度に抑える
+4. 各項目は5単語以内の簡潔な表現にする
+5. 全体として15項目以内に収める
+
+目標は「一目で理解できる簡潔なマインドマップ」です。` 
+    });
+    
+    // ユーザープロンプト（enhancedResultがある場合は、それを含める）
+    if (enhancedResult) {
+      messages.push({ 
+        role: "user", 
+        content: `以下のアイデアと分析結果から簡潔なテキスト形式のマインドマップを作成してください。
+階層はインデントで表現し、各項目の前には記号（例：*、-、+など）を付けてください。
+
+【元のアイデア】
+${ideaContent}
+
+【分析】
+${enhancedResult.analysis}
+
+【評価】
+${enhancedResult.evaluation}
+
+【拡張案】
+${enhancedResult.expansion}
+
+【実現可能性】
+${enhancedResult.feasibility}
+
+【最終ブラッシュアップ】
+${enhancedResult.finalEnhancement}`
+      });
+    } else {
+      // enhancedResultがない場合は、元のアイデアのみを使用
+      messages.push({ 
+        role: "user", 
+        content: `以下のアイデアから簡潔なテキスト形式のマインドマップを作成してください。階層はインデントで表現し、各項目の前には記号（例：*、-、+など）を付けてください：\n\n${ideaContent}` 
+      });
+    }
+    
     const mindmap = await callOpenAI(
       "gpt-4o",
-      [
-        { 
-          role: "system", 
-          content: "あなたはアイデアからテキスト形式のマインドマップを作成するアシスタントです。中心となるアイデアから派生する概念を階層的に表現してください。簡潔に作成してください。" 
-        },
-        { 
-          role: "user", 
-          content: `以下のアイデアからテキスト形式のマインドマップを作成してください。階層はインデントで表現し、各項目の前には記号（例：*、-、+など）を付けてください：\n\n${ideaContent}` 
-        }
-      ],
+      messages,
       0.7,
-      800
+      500
     );
     
     // メモリ解放のためのガベージコレクションを促進
@@ -669,9 +710,9 @@ app.post('/webhook', async (req, res) => {
           console.log('Enhancing idea with multi-step thinking process...');
           const enhancedResult = await enhanceIdea(messageText);
           
-          // マインドマップを生成
-          console.log('Generating mindmap...');
-          const mindmapContent = await generateMindmap(messageText);
+          // マインドマップを生成（ブラッシュアップ結果を使用）
+          console.log('Generating mindmap with enhanced results...');
+          const mindmapContent = await generateMindmap(messageText, enhancedResult);
           
           // データを保存
           console.log('Saving to GitHub...');
