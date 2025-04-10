@@ -298,22 +298,36 @@ async function generateMindmapImage(mermaidCode) {
   // mmdc CLIを使用してPNG画像を生成
   return new Promise((resolve, reject) => {
     // Puppeteerに--no-sandboxオプションを追加（Railwayなどのクラウド環境用）
-    exec(`npx mmdc -i ${tempMmdFile} -o ${outputPngFile} -t neutral -b transparent -p '{"args": ["--no-sandbox", "--disable-setuid-sandbox"]}'`, (error, stdout, stderr) => {
-      // 一時Mermaidファイルを削除
-      try {
-        fs.unlinkSync(tempMmdFile);
-      } catch (err) {
-        console.error(`Error deleting temporary mermaid file: ${err.message}`);
-      }
+    // 一時的な設定ファイルを作成
+    const puppeteerConfigPath = path.join(tempDir, `puppeteer_config_${timestamp}.json`);
+    const puppeteerConfig = {
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    };
+    
+    try {
+      fs.writeFileSync(puppeteerConfigPath, JSON.stringify(puppeteerConfig));
       
-      if (error) {
-        console.error(`Error generating mindmap: ${error.message}`);
-        reject(error);
-        return;
-      }
-      
-      resolve(outputPngFile);
-    });
+      exec(`npx mmdc -i ${tempMmdFile} -o ${outputPngFile} -t neutral -b transparent -p ${puppeteerConfigPath}`, (error, stdout, stderr) => {
+        // 一時ファイルを削除
+        try {
+          fs.unlinkSync(tempMmdFile);
+          fs.unlinkSync(puppeteerConfigPath);
+        } catch (err) {
+          console.error(`Error deleting temporary files: ${err.message}`);
+        }
+        
+        if (error) {
+          console.error(`Error generating mindmap: ${error.message}`);
+          reject(error);
+          return;
+        }
+        
+        resolve(outputPngFile);
+      });
+    } catch (err) {
+      console.error(`Error creating puppeteer config: ${err.message}`);
+      reject(err);
+    }
   });
 }
 
