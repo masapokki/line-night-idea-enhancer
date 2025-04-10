@@ -239,7 +239,10 @@ async function callOpenAI(model, messages, temperature = 0.7, maxTokens = null, 
 
 // テキストマインドマップをMermaid形式に変換する関数
 function convertTextMindmapToMermaid(textMindmap) {
-  const lines = textMindmap.split('\n');
+  // コードブロックの区切り文字を削除
+  let cleanedText = textMindmap.replace(/```/g, '');
+  
+  const lines = cleanedText.split('\n');
   let mermaidCode = 'graph TD;\n';
   const nodeMap = new Map();
   let nodeCounter = 0;
@@ -254,7 +257,15 @@ function convertTextMindmapToMermaid(textMindmap) {
     const contentMatch = line.match(/^[\s]*[*\-+]?\s*(.*)/);
     if (!contentMatch || !contentMatch[1].trim()) return;
     
-    const content = contentMatch[1].trim();
+    // 特殊文字をエスケープ
+    let content = contentMatch[1].trim();
+    content = content
+      .replace(/"/g, '\\"')  // ダブルクォートをエスケープ
+      .replace(/\[/g, '(')   // 角括弧を丸括弧に置換
+      .replace(/\]/g, ')')   // 角括弧を丸括弧に置換
+      .replace(/</g, '&lt;') // 不等号をHTMLエンティティに置換
+      .replace(/>/g, '&gt;'); // 不等号をHTMLエンティティに置換
+    
     const nodeId = `node${nodeCounter++}`;
     
     // ノードを追加
@@ -276,6 +287,7 @@ function convertTextMindmapToMermaid(textMindmap) {
     nodeMap.set(nodeId, { level: indentLevel, content });
   });
   
+  console.log('Generated Mermaid code:', mermaidCode);
   return mermaidCode;
 }
 
