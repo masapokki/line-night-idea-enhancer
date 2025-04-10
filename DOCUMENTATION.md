@@ -20,7 +20,8 @@ LINE ナイトアイデアエンハンサーは、ユーザーが寝る前にLIN
 - **データ保存**: JSON (GitHubリポジトリ)
 - **スケジューリング**: GitHub Actions
 - **メッセージング**: LINE Messaging API
-- **ローカル開発**: ngrok
+- **デプロイ**: Railway
+- **ローカル開発**: ngrok (オプション)
 
 ## 2. アーキテクチャと設計
 
@@ -30,7 +31,7 @@ LINE ナイトアイデアエンハンサーは、ユーザーが寝る前にLIN
 +----------------+     +----------------+     +----------------+
 |                |     |                |     |                |
 |  LINEユーザー   +---->+  Expressサーバー +---->+  JSONデータベース |
-|                |     |  (ngrok経由)    |     |  (GitHub)     |
+|                |     |  (Railway)     |     |  (GitHub)     |
 +----------------+     +----------------+     +-------+--------+
                                                       |
                                                       v
@@ -44,7 +45,7 @@ LINE ナイトアイデアエンハンサーは、ユーザーが寝る前にLIN
 ### データフロー
 
 1. ユーザーがLINEにアイデアを送信
-2. LINE WebhookがExpressサーバーにリクエストを送信
+2. LINE WebhookがRailwayにデプロイされたExpressサーバーにリクエストを送信
 3. Expressサーバーがアイデアをデータベース（JSON）に保存
 4. GitHub Actionsが夜間に実行され、未処理のアイデアをAIで処理
 5. 処理結果がデータベースに保存
@@ -185,6 +186,31 @@ GitHub Actionsは、定期的にPythonスクリプトを実行するために使
 - send_notifications.pyスクリプトを実行
 - 送信済みステータスをGitHubリポジトリにコミット
 
+### 3.5 Railway設定ファイル
+
+Railwayにデプロイするための設定ファイルです。
+
+**Procfile**:
+```
+web: npm start
+```
+
+**railway.json**:
+```json
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "npm install"
+  },
+  "deploy": {
+    "startCommand": "npm start",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  }
+}
+```
+
 ## 4. 開発・テスト手順
 
 ### 4.1 ローカル開発環境のセットアップ
@@ -212,7 +238,7 @@ GitHub Actionsは、定期的にPythonスクリプトを実行するために使
    npm run dev
    ```
 
-5. ngrokの起動:
+5. （オプション）ngrokの起動:
    ```
    npm run tunnel
    ```
@@ -227,14 +253,45 @@ GitHub Actionsは、定期的にPythonスクリプトを実行するために使
 2. 新規プロバイダーを作成（既存のものを使用してもOK）
 3. 新規チャンネルを作成（Messaging API）
 4. チャンネルシークレットとチャンネルアクセストークンを取得
-5. Webhook URLを設定（ngrokが生成したURL + `/webhook`）
+5. Webhook URLを設定（Railwayのデプロイ後のURL + `/webhook`）
 6. Webhookの利用をオンに設定
 
-### 4.3 テスト手順
+### 4.3 Railwayへのデプロイ
+
+1. Railwayアカウントの作成:
+   - [Railway](https://railway.app/)にアクセス
+   - GitHubアカウントでサインアップ
+
+2. 新規プロジェクトの作成:
+   - 「New Project」をクリック
+   - 「Deploy from GitHub repo」を選択
+   - リポジトリを選択
+
+3. 環境変数の設定:
+   - 「Variables」タブをクリック
+   - 以下の環境変数を追加:
+     - LINE_CHANNEL_SECRET
+     - LINE_CHANNEL_ACCESS_TOKEN
+     - GITHUB_TOKEN
+     - GITHUB_REPO_OWNER
+     - GITHUB_REPO_NAME
+     - OPENAI_API_KEY
+     - PORT（デフォルトは3000）
+
+4. デプロイの確認:
+   - 「Deployments」タブでデプロイ状況を確認
+   - 生成されたURLをコピー（例: `https://your-app.railway.app`）
+   - LINE Developers ConsoleでWebhook URLを更新（URL + `/webhook`）
+
+5. ログの確認:
+   - 「Logs」タブでアプリケーションのログを確認
+   - エラーがある場合は修正
+
+### 4.4 テスト手順
 
 1. **Webhook受信テスト**:
    - LINEアプリでボットにメッセージを送信
-   - サーバーのログで受信を確認
+   - Railwayのログで受信を確認
    - データベースファイルでアイデアの保存を確認
 
 2. **アイデア処理テスト**:
@@ -259,16 +316,16 @@ GitHub Actionsは、定期的にPythonスクリプトを実行するために使
 **症状**: LINE Developersコンソールでの「検証」ボタンクリック時に「接続に失敗しました」というエラーが表示される。
 
 **解決策**:
-- ngrokが正常に動作しているか確認
+- Railwayのデプロイが成功しているか確認
 - Webhook URLが正しく設定されているか確認（末尾に`/webhook`が必要）
-- サーバーが起動しているか確認
+- Railwayのログでエラーを確認
 
 #### OpenAI APIのエラー
 
 **症状**: アイデア処理時に「No API key provided」などのエラーが表示される。
 
 **解決策**:
-- `.env`ファイルにOPENAI_API_KEYが正しく設定されているか確認
+- Railwayの環境変数にOPENAI_API_KEYが正しく設定されているか確認
 - OpenAI APIキーが有効か確認
 - OpenAI Python SDKのバージョンを確認（0.28を使用）
 
@@ -281,16 +338,27 @@ GitHub Actionsは、定期的にPythonスクリプトを実行するために使
 - トークンに必要な権限（repo）が付与されているか確認
 - リポジトリ名とユーザー名が正しく設定されているか確認
 
+#### Railwayデプロイのエラー
+
+**症状**: Railwayでのデプロイが失敗する。
+
+**解決策**:
+- Railwayのログでエラーを確認
+- `package.json`の`start`スクリプトが正しく設定されているか確認
+- 必要なファイル（`Procfile`、`railway.json`）が存在するか確認
+- 環境変数が正しく設定されているか確認
+
 ### 5.2 デバッグ方法
 
-1. **サーバーログの確認**:
-   - `npm run dev`でサーバーを起動し、ログを確認
+1. **Railwayログの確認**:
+   - Railwayダッシュボードの「Logs」タブでログを確認
 
-2. **ngrokログの確認**:
-   - ngrokダッシュボード（http://localhost:4040）でリクエスト/レスポンスを確認
+2. **ローカルでのデバッグ**:
+   - `npm run dev`でサーバーを起動し、ログを確認
+   - 必要に応じてngrokを使用してWebhookをテスト
 
 3. **データベースの確認**:
-   - `data/database.json`ファイルの内容を確認
+   - GitHubリポジトリの`data/database.json`ファイルの内容を確認
 
 4. **GitHub Actionsログの確認**:
    - GitHubリポジトリの「Actions」タブでワークフローの実行ログを確認
@@ -302,6 +370,7 @@ GitHub Actionsは、定期的にPythonスクリプトを実行するために使
 - [LINE Messaging API](https://developers.line.biz/ja/reference/messaging-api/)
 - [OpenAI API](https://platform.openai.com/docs/api-reference)
 - [GitHub API](https://docs.github.com/ja/rest)
+- [Railway API](https://docs.railway.app/reference/public-api)
 
 ### 6.2 ライブラリドキュメント
 
@@ -315,12 +384,14 @@ GitHub Actionsは、定期的にPythonスクリプトを実行するために使
 - [GitHub Actions ドキュメント](https://docs.github.com/ja/actions)
 - [LINE Bot SDK](https://github.com/line/line-bot-sdk-nodejs)
 - [dotenv](https://github.com/motdotla/dotenv)
+- [Railway ドキュメント](https://docs.railway.app/)
 
 ## 7. 注意事項
 
 ### 7.1 セキュリティ
 
 - APIキーやトークンは`.env`ファイルに保存し、Gitリポジトリにコミットしないでください。
+- Railwayの環境変数を使用して、機密情報を安全に管理してください。
 - LINE Webhook URLは公開されるため、適切な認証と検証を行ってください。
 - ユーザーデータの取り扱いには十分注意してください。
 
@@ -328,10 +399,11 @@ GitHub Actionsは、定期的にPythonスクリプトを実行するために使
 
 - OpenAI APIは使用量に応じた課金が発生します。コストを抑えるために、処理するアイデアの量を調整してください。
 - GitHub Actionsは、パブリックリポジトリでは無料で利用できますが、プライベートリポジトリでは制限があります。
-- ngrokの無料プランでは、セッションが8時間で切れます。本番環境では、固定URLを持つサービスの使用を検討してください。
+- Railwayの無料プランには、月間使用時間や帯域幅などの制限があります。詳細は[Railwayの料金ページ](https://railway.app/pricing)を確認してください。
 
 ### 7.3 メンテナンス
 
 - OpenAI APIのバージョンが変更された場合、スクリプトの修正が必要になる可能性があります。
 - LINE Messaging APIの仕様変更に注意してください。
 - GitHub Actionsの実行時間に制限があるため、処理が長時間かかる場合は注意が必要です。
+- Railwayのデプロイ設定が変更された場合、`railway.json`や`Procfile`の更新が必要になる可能性があります。
