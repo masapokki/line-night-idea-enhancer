@@ -483,8 +483,8 @@ ${enhancedResult.finalEnhancement}`
     const mindmap = await callOpenAI(
       "gpt-4o",
       messages,
-      0.7,
-      500
+      0.7
+      // maxTokensパラメータを削除
     );
     
     // メモリ解放のためのガベージコレクションを促進
@@ -545,8 +545,8 @@ async function enhanceIdea(ideaContent) {
           content: `以下のアイデアを分析してください：\n\n${ideaContent}` 
         }
       ],
-      0.7,
-      200
+      0.7
+      // maxTokensパラメータを削除
     );
     
     // メモリ解放のためのガベージコレクションを促進
@@ -566,8 +566,8 @@ async function enhanceIdea(ideaContent) {
           content: `以下のアイデアの強みと弱みを評価してください：\n\n${ideaContent}\n\n分析結果：\n${analysis}` 
         }
       ],
-      0.7,
-      200
+      0.7
+      // maxTokensパラメータを削除
     );
     
     // メモリ解放のためのガベージコレクションを促進
@@ -587,8 +587,8 @@ async function enhanceIdea(ideaContent) {
           content: `以下のアイデアを拡張・発展させてください：\n\n${ideaContent}\n\n分析結果：\n${analysis}\n\n評価：\n${evaluation}` 
         }
       ],
-      0.7,
-      200
+      0.7
+      // maxTokensパラメータを削除
     );
     
     // メモリ解放のためのガベージコレクションを促進
@@ -608,8 +608,8 @@ async function enhanceIdea(ideaContent) {
           content: `以下のアイデアの実現可能性を評価してください：\n\n${ideaContent}\n\n拡張案：\n${expansion}` 
         }
       ],
-      0.7,
-      200
+      0.7
+      // maxTokensパラメータを削除
     );
     
     // メモリ解放のためのガベージコレクションを促進
@@ -629,8 +629,8 @@ async function enhanceIdea(ideaContent) {
           content: `以下のアイデアの最終ブラッシュアップ案を作成してください：\n\n元のアイデア：\n${ideaContent}\n\n分析：\n${analysis}\n\n評価：\n${evaluation}\n\n拡張案：\n${expansion}\n\n実現可能性：\n${feasibility}` 
         }
       ],
-      0.7,
-      500
+      0.7
+      // maxTokensパラメータを削除
     );
     
     // メモリ解放のためのガベージコレクションを促進
