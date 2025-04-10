@@ -492,10 +492,22 @@ app.post('/webhook', async (req, res) => {
             text: `【マインドマップ】\n${mindmapContent}`
           });
           
-          // 詳細を見るオプションを追加
+          // 詳細を見るボタン付きメッセージを追加
           messages.push({
             type: 'text',
-            text: '思考プロセスの詳細を見るには「詳細を見る」と送信してください。'
+            text: '思考プロセスの詳細を見るにはボタンを押してください。',
+            quickReply: {
+              items: [
+                {
+                  type: 'action',
+                  action: {
+                    type: 'message',
+                    label: '詳細を見る',
+                    text: '詳細を見る'
+                  }
+                }
+              ]
+            }
           });
           
           // ユーザーの状態を保存（思考プロセスを保持）
