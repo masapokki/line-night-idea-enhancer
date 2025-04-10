@@ -695,30 +695,103 @@ app.post('/webhook', async (req, res) => {
           console.log('Sending thinking process details...');
           
           const thinkingProcess = userStates[userId].pendingThinkingProcess;
+          const maxLength = 4000; // LINEの制限は5000文字だが、余裕を持たせる
           
-          // 思考プロセスを送信
-          await replyToUser(replyToken, [
-            {
-              type: 'text',
-              text: `【思考プロセス 1/2】\n\n1️⃣ アイデア分析:\n${thinkingProcess.analysis}\n\n2️⃣ 強み・弱み評価:\n${thinkingProcess.evaluation}`
-            }
-          ]);
+          // 思考プロセスのパート1（分析と評価）
+          const part1Text = `1️⃣ アイデア分析:\n${thinkingProcess.analysis}\n\n2️⃣ 強み・弱み評価:\n${thinkingProcess.evaluation}`;
           
-          // 2つ目のメッセージは別途送信
-          await axios.post('https://api.line.me/v2/bot/message/push', {
-            to: userId,
-            messages: [
+          if (part1Text.length <= maxLength) {
+            // 通常のケース：1つのメッセージで送信
+            await replyToUser(replyToken, [
               {
                 type: 'text',
-                text: `【思考プロセス 2/2】\n\n3️⃣ 拡張と発展:\n${thinkingProcess.expansion}\n\n4️⃣ 実現可能性:\n${thinkingProcess.feasibility}`
+                text: `【思考プロセス 1/2】\n\n${part1Text}`
               }
-            ]
-          }, {
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
-            }
-          });
+            ]);
+          } else {
+            // 長文の場合：分割して送信
+            const analysisText = `1️⃣ アイデア分析:\n${thinkingProcess.analysis}`;
+            const evaluationText = `2️⃣ 強み・弱み評価:\n${thinkingProcess.evaluation}`;
+            
+            await replyToUser(replyToken, [
+              {
+                type: 'text',
+                text: `【思考プロセス 1/3】\n\n${analysisText}`
+              }
+            ]);
+            
+            // 評価は別途送信
+            await axios.post('https://api.line.me/v2/bot/message/push', {
+              to: userId,
+              messages: [
+                {
+                  type: 'text',
+                  text: `【思考プロセス 2/3】\n\n${evaluationText}`
+                }
+              ]
+            }, {
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+              }
+            });
+          }
+          
+          // 思考プロセスのパート2（拡張と実現可能性）
+          const part2Text = `3️⃣ 拡張と発展:\n${thinkingProcess.expansion}\n\n4️⃣ 実現可能性:\n${thinkingProcess.feasibility}`;
+          
+          if (part2Text.length <= maxLength) {
+            // 通常のケース：1つのメッセージで送信
+            await axios.post('https://api.line.me/v2/bot/message/push', {
+              to: userId,
+              messages: [
+                {
+                  type: 'text',
+                  text: `【思考プロセス ${part1Text.length > maxLength ? '3/3' : '2/2'}】\n\n${part2Text}`
+                }
+              ]
+            }, {
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+              }
+            });
+          } else {
+            // 長文の場合：分割して送信
+            const expansionText = `3️⃣ 拡張と発展:\n${thinkingProcess.expansion}`;
+            const feasibilityText = `4️⃣ 実現可能性:\n${thinkingProcess.feasibility}`;
+            
+            await axios.post('https://api.line.me/v2/bot/message/push', {
+              to: userId,
+              messages: [
+                {
+                  type: 'text',
+                  text: `【思考プロセス ${part1Text.length > maxLength ? '3/4' : '2/3'}】\n\n${expansionText}`
+                }
+              ]
+            }, {
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+              }
+            });
+            
+            // 実現可能性は別途送信
+            await axios.post('https://api.line.me/v2/bot/message/push', {
+              to: userId,
+              messages: [
+                {
+                  type: 'text',
+                  text: `【思考プロセス ${part1Text.length > maxLength ? '4/4' : '3/3'}】\n\n${feasibilityText}`
+                }
+              ]
+            }, {
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+              }
+            });
+          }
           
           console.log('Thinking process details sent successfully');
           return res.status(200).send('OK');
@@ -755,31 +828,46 @@ app.post('/webhook', async (req, res) => {
             }
           ];
           
-          // 最終ブラッシュアップ
-          messages.push({
-            type: 'text',
-            text: `【最終ブラッシュアップ】\n${enhancedResult.finalEnhancement}`
-          });
+          // 最終ブラッシュアップ（長文の場合は分割）
+          const maxLength = 4000; // LINEの制限は5000文字だが、余裕を持たせる
+          const finalEnhancement = enhancedResult.finalEnhancement;
           
-          // マインドマップをテキストとして送信
-          messages.push({
-            type: 'text',
-            text: `【マインドマップ】\n${mindmapContent}`
-          });
+          if (finalEnhancement.length <= maxLength) {
+            // 通常のケース：1つのメッセージで送信
+            messages.push({
+              type: 'text',
+              text: `【最終ブラッシュアップ】\n${finalEnhancement}`
+            });
+          } else {
+            // 長文の場合：分割して送信
+            const part1 = finalEnhancement.substring(0, maxLength);
+            const part2 = finalEnhancement.substring(maxLength);
+            
+            messages.push({
+              type: 'text',
+              text: `【最終ブラッシュアップ (1/2)】\n${part1}`
+            });
+            
+            messages.push({
+              type: 'text',
+              text: `【最終ブラッシュアップ (2/2)】\n${part2}`
+            });
+          }
           
-          // 詳細を見るボタン付きメッセージを追加
+          // マインドマップのテキストは送信しない（画像のみ送信）
+          
+          // 詳細を見るボタン付きメッセージを追加（テンプレートメッセージを使用）
           messages.push({
-            type: 'text',
-            text: '思考プロセスの詳細を見るにはボタンを押してください。',
-            quickReply: {
-              items: [
+            type: 'template',
+            altText: '思考プロセスの詳細を見る',
+            template: {
+              type: 'buttons',
+              text: '思考プロセスの詳細を見るにはボタンを押してください。',
+              actions: [
                 {
-                  type: 'action',
-                  action: {
-                    type: 'message',
-                    label: '詳細を見る',
-                    text: '詳細を見る'
-                  }
+                  type: 'message',
+                  label: '詳細を見る',
+                  text: '詳細を見る'
                 }
               ]
             }
