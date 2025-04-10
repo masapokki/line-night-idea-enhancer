@@ -319,7 +319,13 @@ async function generateMindmapImage(mermaidCode) {
     try {
       fs.writeFileSync(puppeteerConfigPath, JSON.stringify(puppeteerConfig));
       
-      exec(`npx mmdc -i ${tempMmdFile} -o ${outputPngFile} -t neutral -b transparent -p ${puppeteerConfigPath}`, (error, stdout, stderr) => {
+      // 見やすさを改善するためのオプション
+      // -t: テーマ (forest - より見やすいテーマ)
+      // -b: 背景色 (white - 透明背景ではなく白背景)
+      // -w: 幅 (1200px - 横長の問題を解決)
+      // -H: 高さ (800px - 適切な高さ)
+      // -s: スケール (2 - 文字を大きく)
+      exec(`npx mmdc -i ${tempMmdFile} -o ${outputPngFile} -t forest -b white -w 1200 -H 800 -s 2 -p ${puppeteerConfigPath}`, (error, stdout, stderr) => {
         // 一時ファイルを削除
         try {
           fs.unlinkSync(tempMmdFile);
