@@ -243,9 +243,11 @@ function convertTextMindmapToMermaid(textMindmap) {
   let cleanedText = textMindmap.replace(/```/g, '');
   
   const lines = cleanedText.split('\n');
-  let mermaidCode = 'graph TD;\n';
-  const nodeMap = new Map();
-  let nodeCounter = 0;
+  let mermaidCode = 'mindmap\n';
+  
+  // 階層構造を保持する配列
+  const hierarchy = [];
+  let rootNode = null;
   
   // 各行を処理
   lines.forEach(line => {
@@ -259,32 +261,28 @@ function convertTextMindmapToMermaid(textMindmap) {
     
     // 特殊文字をエスケープ
     let content = contentMatch[1].trim();
-    content = content
-      .replace(/"/g, '\\"')  // ダブルクォートをエスケープ
-      .replace(/\[/g, '(')   // 角括弧を丸括弧に置換
-      .replace(/\]/g, ')')   // 角括弧を丸括弧に置換
-      .replace(/</g, '&lt;') // 不等号をHTMLエンティティに置換
-      .replace(/>/g, '&gt;'); // 不等号をHTMLエンティティに置換
     
-    const nodeId = `node${nodeCounter++}`;
-    
-    // ノードを追加
-    mermaidCode += `  ${nodeId}["${content}"];\n`;
-    
-    // 親ノードとの関係を追加
-    if (indentLevel > 0) {
+    // インデントレベルに応じてノードを追加
+    if (indentLevel === 0) {
+      // ルートノード
+      rootNode = content;
+      mermaidCode += `  root((${content}))\n`;
+      hierarchy[0] = 'root';
+    } else {
+      // 親ノードを特定
       const parentLevel = indentLevel - 1;
-      // 親ノードを探す
-      for (const [id, data] of [...nodeMap.entries()].reverse()) {
-        if (data.level === parentLevel) {
-          mermaidCode += `  ${id} --> ${nodeId};\n`;
-          break;
-        }
+      const parentId = hierarchy[parentLevel];
+      
+      if (parentId) {
+        // 現在のノードのID
+        const currentId = `id${hierarchy.length}`;
+        hierarchy[indentLevel] = currentId;
+        
+        // 階層に応じてインデントを調整
+        const indent = '  '.repeat(indentLevel + 1);
+        mermaidCode += `${indent}${parentId}[${content}]\n`;
       }
     }
-    
-    // ノード情報を保存
-    nodeMap.set(nodeId, { level: indentLevel, content });
   });
   
   console.log('Generated Mermaid code:', mermaidCode);
@@ -302,7 +300,7 @@ async function generateMindmapImage(mermaidCode) {
   // 一時ファイルパスの生成
   const timestamp = Date.now();
   const tempMmdFile = path.join(tempDir, `mindmap_${timestamp}.mmd`);
-  const outputPngFile = path.join(tempDir, `mindmap_${timestamp}.png`);
+  const outputSvgFile = path.join(tempDir, `mindmap_${timestamp}.svg`);
   
   // Mermaidコードを一時ファイルに書き込む
   fs.writeFileSync(tempMmdFile, mermaidCode);
@@ -325,11 +323,39 @@ async function generateMindmapImage(mermaidCode) {
       // -w: 幅 (1200px - 横長の問題を解決)
       // -H: 高さ (800px - 適切な高さ)
       // -s: スケール (2 - 文字を大きく)
-      exec(`npx mmdc -i ${tempMmdFile} -o ${outputPngFile} -t forest -b white -w 1200 -H 800 -s 2 -p ${puppeteerConfigPath}`, (error, stdout, stderr) => {
+      // -C: カスタムCSS (日本語フォントを指定)
+      
+      // 一時的なCSSファイルを作成（日本語フォント対応）
+      const cssContent = `
+        /* 日本語フォント対応 */
+        .node rect, .node circle, .node ellipse, .node polygon, .node path {
+          fill: #fff;
+          stroke: #1f2020;
+          stroke-width: 1px;
+        }
+        .node .label {
+          font-family: 'Noto Sans JP', 'Meiryo', 'Yu Gothic', 'Hiragino Sans', sans-serif;
+        }
+        .node text {
+          font-family: 'Noto Sans JP', 'Meiryo', 'Yu Gothic', 'Hiragino Sans', sans-serif;
+          font-size: 14px;
+        }
+        .edgeLabel {
+          font-family: 'Noto Sans JP', 'Meiryo', 'Yu Gothic', 'Hiragino Sans', sans-serif;
+        }
+      `;
+      const cssFilePath = path.join(tempDir, `custom_style_${timestamp}.css`);
+      fs.writeFileSync(cssFilePath, cssContent);
+      
+      // スマートフォン表示に最適化したサイズ比
+      // 縦長の比率（9:16）に近い値を設定
+      // 幅を小さく、高さを大きくする
+      exec(`npx mmdc -i ${tempMmdFile} -o ${outputSvgFile} -t forest -b white -w 800 -H 1200 -s 2 -p ${puppeteerConfigPath} -C ${cssFilePath}`, (error, stdout, stderr) => {
         // 一時ファイルを削除
         try {
           fs.unlinkSync(tempMmdFile);
           fs.unlinkSync(puppeteerConfigPath);
+          fs.unlinkSync(cssFilePath);
         } catch (err) {
           console.error(`Error deleting temporary files: ${err.message}`);
         }
@@ -340,7 +366,7 @@ async function generateMindmapImage(mermaidCode) {
           return;
         }
         
-        resolve(outputPngFile);
+        resolve(outputSvgFile);
       });
     } catch (err) {
       console.error(`Error creating puppeteer config: ${err.message}`);

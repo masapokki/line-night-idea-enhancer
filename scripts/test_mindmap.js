@@ -22,9 +22,11 @@ function convertTextMindmapToMermaid(textMindmap) {
   let cleanedText = textMindmap.replace(/```/g, '');
   
   const lines = cleanedText.split('\n');
-  let mermaidCode = 'graph TD;\n';
-  const nodeMap = new Map();
-  let nodeCounter = 0;
+  let mermaidCode = 'mindmap\n';
+  
+  // 階層構造を保持する配列
+  const hierarchy = [];
+  let rootNode = null;
   
   // 各行を処理
   lines.forEach(line => {
@@ -38,32 +40,28 @@ function convertTextMindmapToMermaid(textMindmap) {
     
     // 特殊文字をエスケープ
     let content = contentMatch[1].trim();
-    content = content
-      .replace(/"/g, '\\"')  // ダブルクォートをエスケープ
-      .replace(/\[/g, '(')   // 角括弧を丸括弧に置換
-      .replace(/\]/g, ')')   // 角括弧を丸括弧に置換
-      .replace(/</g, '&lt;') // 不等号をHTMLエンティティに置換
-      .replace(/>/g, '&gt;'); // 不等号をHTMLエンティティに置換
     
-    const nodeId = `node${nodeCounter++}`;
-    
-    // ノードを追加
-    mermaidCode += `  ${nodeId}["${content}"];\n`;
-    
-    // 親ノードとの関係を追加
-    if (indentLevel > 0) {
+    // インデントレベルに応じてノードを追加
+    if (indentLevel === 0) {
+      // ルートノード
+      rootNode = content;
+      mermaidCode += `  root((${content}))\n`;
+      hierarchy[0] = 'root';
+    } else {
+      // 親ノードを特定
       const parentLevel = indentLevel - 1;
-      // 親ノードを探す
-      for (const [id, data] of [...nodeMap.entries()].reverse()) {
-        if (data.level === parentLevel) {
-          mermaidCode += `  ${id} --> ${nodeId};\n`;
-          break;
-        }
+      const parentId = hierarchy[parentLevel];
+      
+      if (parentId) {
+        // 現在のノードのID
+        const currentId = `id${hierarchy.length}`;
+        hierarchy[indentLevel] = currentId;
+        
+        // 階層に応じてインデントを調整
+        const indent = '  '.repeat(indentLevel + 1);
+        mermaidCode += `${indent}${parentId}[${content}]\n`;
       }
     }
-    
-    // ノード情報を保存
-    nodeMap.set(nodeId, { level: indentLevel, content });
   });
   
   console.log('Generated Mermaid code:', mermaidCode);
@@ -104,8 +102,10 @@ async function generateMindmapImage(mermaidCode, outputFormat = 'png') {
     // -s: スケール (例: 2)
     // -p: Puppeteer設定ファイル
     
-    // 横長の問題を解決するために、幅と高さを調整
-    const command = `npx mmdc -i ${tempMmdFile} -o ${outputFile} -t forest -b white -w 1200 -H 800 -s 2 -p ${puppeteerConfigPath}`;
+    // スマートフォン表示に最適化したサイズ比
+    // 縦長の比率（9:16）に近い値を設定
+    // 幅を小さく、高さを大きくする
+    const command = `npx mmdc -i ${tempMmdFile} -o ${outputFile} -t forest -b white -w 800 -H 1200 -s 2 -p ${puppeteerConfigPath}`;
     
     console.log(`Executing command: ${command}`);
     
