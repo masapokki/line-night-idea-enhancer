@@ -91,7 +91,7 @@ function saveDatabase(database) {
 }
 
 // GitHubにデータを保存する関数
-async function saveToGitHub(userId, content, enhancedContent, mindmapContent) {
+async function saveToGitHub(userId, content, enhancedResult, mindmapContent) {
   try {
     // ローカルデータベースを更新
     const database = readDatabase();
@@ -118,7 +118,11 @@ async function saveToGitHub(userId, content, enhancedContent, mindmapContent) {
     
     database.results[resultId] = {
       idea_id: ideaId,
-      enhanced_content: enhancedContent,
+      analysis: enhancedResult.analysis,
+      evaluation: enhancedResult.evaluation,
+      expansion: enhancedResult.expansion,
+      feasibility: enhancedResult.feasibility,
+      enhanced_content: enhancedResult.finalEnhancement,
       mindmap_content: mindmapContent,
       created_at: new Date().toISOString(),
       sent: true // すでに送信済み
@@ -179,20 +183,109 @@ async function saveToGitHub(userId, content, enhancedContent, mindmapContent) {
 // アイデアをブラッシュアップする関数
 async function enhanceIdea(ideaContent) {
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4",
+    // ステップ1: アイデア分析
+    console.log('Step 1: Analyzing idea...');
+    const analysisResponse = await openai.chat.completions.create({
+      model: "gpt-4o",
       messages: [
-        { role: "system", content: "あなたは創造的なアイデアを発展させるアシスタントです。ユーザーのアイデアを分析し、それを発展させ、より具体的で実用的なものにしてください。" },
-        { role: "user", content: `以下のアイデアをブラッシュアップしてください：\n\n${ideaContent}` }
+        { 
+          role: "system", 
+          content: "あなたはアイデアを分析するエキスパートです。提案されたアイデアの本質、目的、対象ユーザー、解決する問題を分析してください。" 
+        },
+        { 
+          role: "user", 
+          content: `以下のアイデアを分析してください：\n\n${ideaContent}` 
+        }
       ],
-      max_tokens: 1000,
       temperature: 0.7
     });
+    const analysis = analysisResponse.choices[0].message.content.trim();
     
-    return response.choices[0].message.content.trim();
+    // ステップ2: 強み・弱み評価
+    console.log('Step 2: Evaluating strengths and weaknesses...');
+    const evaluationResponse = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { 
+          role: "system", 
+          content: "あなたはアイデアの評価を行うエキスパートです。アイデアの強みと改善が必要な点を特定してください。" 
+        },
+        { 
+          role: "user", 
+          content: `以下のアイデアの強みと弱みを評価してください：\n\n${ideaContent}\n\n分析結果：\n${analysis}` 
+        }
+      ],
+      temperature: 0.7
+    });
+    const evaluation = evaluationResponse.choices[0].message.content.trim();
+    
+    // ステップ3: 拡張と発展
+    console.log('Step 3: Expanding and developing the idea...');
+    const expansionResponse = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { 
+          role: "system", 
+          content: "あなたは創造的なアイデアを発展させるエキスパートです。アイデアをより具体的で実用的な形に拡張してください。" 
+        },
+        { 
+          role: "user", 
+          content: `以下のアイデアを拡張・発展させてください：\n\n${ideaContent}\n\n分析結果：\n${analysis}\n\n評価：\n${evaluation}` 
+        }
+      ],
+      temperature: 0.8
+    });
+    const expansion = expansionResponse.choices[0].message.content.trim();
+    
+    // ステップ4: 実現可能性検討
+    console.log('Step 4: Assessing feasibility...');
+    const feasibilityResponse = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { 
+          role: "system", 
+          content: "あなたは実現可能性を評価するエキスパートです。アイデアの技術的・経済的な実現可能性を検討してください。" 
+        },
+        { 
+          role: "user", 
+          content: `以下のアイデアの実現可能性を評価してください：\n\n${ideaContent}\n\n拡張案：\n${expansion}` 
+        }
+      ],
+      temperature: 0.7
+    });
+    const feasibility = feasibilityResponse.choices[0].message.content.trim();
+    
+    // ステップ5: 最終ブラッシュアップ
+    console.log('Step 5: Creating final enhanced version...');
+    const finalResponse = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { 
+          role: "system", 
+          content: "あなたは創造的なアイデアを最終的にブラッシュアップするエキスパートです。これまでの分析と評価を統合して、最終的なブラッシュアップ案を作成してください。" 
+        },
+        { 
+          role: "user", 
+          content: `以下のアイデアの最終ブラッシュアップ案を作成してください：\n\n元のアイデア：\n${ideaContent}\n\n分析：\n${analysis}\n\n評価：\n${evaluation}\n\n拡張案：\n${expansion}\n\n実現可能性：\n${feasibility}` 
+        }
+      ],
+      temperature: 0.7
+    });
+    const finalEnhancement = finalResponse.choices[0].message.content.trim();
+    
+    // 思考プロセス全体を含む結果を返す
+    return {
+      analysis,
+      evaluation,
+      expansion,
+      feasibility,
+      finalEnhancement
+    };
   } catch (error) {
     console.error('Error enhancing idea:', error);
-    return `アイデアの処理中にエラーが発生しました。エラー: ${error.message}`;
+    return {
+      error: `アイデアの処理中にエラーが発生しました。エラー: ${error.message}`
+    };
   }
 }
 
@@ -200,7 +293,7 @@ async function enhanceIdea(ideaContent) {
 async function generateMindmap(ideaContent) {
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-4o",
       messages: [
         { role: "system", content: "あなたはアイデアからテキスト形式のマインドマップを作成するアシスタントです。中心となるアイデアから派生する概念を階層的に表現してください。" },
         { role: "user", content: `以下のアイデアからテキスト形式のマインドマップを作成してください。階層はインデントで表現し、各項目の前には記号（例：*、-、+など）を付けてください：\n\n${ideaContent}` }
@@ -256,9 +349,9 @@ app.post('/webhook', async (req, res) => {
         }]);
         
         try {
-          // アイデアをブラッシュアップ
-          console.log('Enhancing idea...');
-          const enhancedContent = await enhanceIdea(messageText);
+          // アイデアをブラッシュアップ（複数ステップの思考プロセス）
+          console.log('Enhancing idea with multi-step thinking process...');
+          const enhancedResult = await enhanceIdea(messageText);
           
           // マインドマップを生成
           console.log('Generating mindmap...');
@@ -266,26 +359,43 @@ app.post('/webhook', async (req, res) => {
           
           // データを保存
           console.log('Saving to GitHub...');
-          await saveToGitHub(userId, messageText, enhancedContent, mindmapContent);
+          await saveToGitHub(userId, messageText, enhancedResult, mindmapContent);
           
           // 結果をLINEで送信
           console.log('Sending results to LINE...');
+          
+          // 思考プロセスのメッセージが長すぎる場合は分割して送信
+          const messages = [
+            {
+              type: 'text',
+              text: `【元のアイデア】\n${messageText}`
+            }
+          ];
+          
+          // 思考プロセスを分割して送信
+          messages.push({
+            type: 'text',
+            text: `【思考プロセス 1/2】\n\n1️⃣ アイデア分析:\n${enhancedResult.analysis}\n\n2️⃣ 強み・弱み評価:\n${enhancedResult.evaluation}`
+          });
+          
+          messages.push({
+            type: 'text',
+            text: `【思考プロセス 2/2】\n\n3️⃣ 拡張と発展:\n${enhancedResult.expansion}\n\n4️⃣ 実現可能性:\n${enhancedResult.feasibility}`
+          });
+          
+          messages.push({
+            type: 'text',
+            text: `【最終ブラッシュアップ】\n${enhancedResult.finalEnhancement}`
+          });
+          
+          messages.push({
+            type: 'text',
+            text: `【マインドマップ】\n${mindmapContent}`
+          });
+          
           await axios.post('https://api.line.me/v2/bot/message/push', {
             to: userId,
-            messages: [
-              {
-                type: 'text',
-                text: `【元のアイデア】\n${messageText}`
-              },
-              {
-                type: 'text',
-                text: `【ブラッシュアップ】\n${enhancedContent}`
-              },
-              {
-                type: 'text',
-                text: `【マインドマップ】\n${mindmapContent}`
-              }
-            ]
+            messages: messages
           }, {
             headers: {
               'Content-Type': 'application/json',
