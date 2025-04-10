@@ -190,7 +190,7 @@ async function enhanceIdea(ideaContent) {
       messages: [
         { 
           role: "system", 
-          content: "あなたはアイデアを分析するエキスパートです。提案されたアイデアの本質、目的、対象ユーザー、解決する問題を分析してください。" 
+          content: "あなたはアイデアを分析するエキスパートです。提案されたアイデアの本質、目的、対象ユーザー、解決する問題を簡潔に分析してください。200字以内で要点をまとめてください。" 
         },
         { 
           role: "user", 
@@ -208,7 +208,7 @@ async function enhanceIdea(ideaContent) {
       messages: [
         { 
           role: "system", 
-          content: "あなたはアイデアの評価を行うエキスパートです。アイデアの強みと改善が必要な点を特定してください。" 
+          content: "あなたはアイデアの評価を行うエキスパートです。アイデアの強みと改善が必要な点を簡潔に特定してください。200字以内で要点をまとめてください。" 
         },
         { 
           role: "user", 
@@ -226,7 +226,7 @@ async function enhanceIdea(ideaContent) {
       messages: [
         { 
           role: "system", 
-          content: "あなたは創造的なアイデアを発展させるエキスパートです。アイデアをより具体的で実用的な形に拡張してください。" 
+          content: "あなたは創造的なアイデアを発展させるエキスパートです。アイデアをより具体的で実用的な形に拡張してください。200字以内で要点をまとめてください。" 
         },
         { 
           role: "user", 
@@ -244,7 +244,7 @@ async function enhanceIdea(ideaContent) {
       messages: [
         { 
           role: "system", 
-          content: "あなたは実現可能性を評価するエキスパートです。アイデアの技術的・経済的な実現可能性を検討してください。" 
+          content: "あなたは実現可能性を評価するエキスパートです。アイデアの技術的・経済的な実現可能性を簡潔に検討してください。200字以内で要点をまとめてください。" 
         },
         { 
           role: "user", 
@@ -364,7 +364,7 @@ app.post('/webhook', async (req, res) => {
           // 結果をLINEで送信
           console.log('Sending results to LINE...');
           
-          // 思考プロセスのメッセージが長すぎる場合は分割して送信
+          // メッセージを作成（元のアイデア、最終ブラッシュアップ、マインドマップ、思考プロセスの順）
           const messages = [
             {
               type: 'text',
@@ -372,7 +372,19 @@ app.post('/webhook', async (req, res) => {
             }
           ];
           
-          // 思考プロセスを分割して送信
+          // 最終ブラッシュアップ
+          messages.push({
+            type: 'text',
+            text: `【最終ブラッシュアップ】\n${enhancedResult.finalEnhancement}`
+          });
+          
+          // マインドマップ
+          messages.push({
+            type: 'text',
+            text: `【マインドマップ】\n${mindmapContent}`
+          });
+          
+          // 思考プロセスを最後に送信
           messages.push({
             type: 'text',
             text: `【思考プロセス 1/2】\n\n1️⃣ アイデア分析:\n${enhancedResult.analysis}\n\n2️⃣ 強み・弱み評価:\n${enhancedResult.evaluation}`
@@ -381,16 +393,6 @@ app.post('/webhook', async (req, res) => {
           messages.push({
             type: 'text',
             text: `【思考プロセス 2/2】\n\n3️⃣ 拡張と発展:\n${enhancedResult.expansion}\n\n4️⃣ 実現可能性:\n${enhancedResult.feasibility}`
-          });
-          
-          messages.push({
-            type: 'text',
-            text: `【最終ブラッシュアップ】\n${enhancedResult.finalEnhancement}`
-          });
-          
-          messages.push({
-            type: 'text',
-            text: `【マインドマップ】\n${mindmapContent}`
           });
           
           await axios.post('https://api.line.me/v2/bot/message/push', {
