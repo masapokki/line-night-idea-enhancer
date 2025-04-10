@@ -297,7 +297,8 @@ async function generateMindmapImage(mermaidCode) {
   
   // mmdc CLIを使用してPNG画像を生成
   return new Promise((resolve, reject) => {
-    exec(`npx mmdc -i ${tempMmdFile} -o ${outputPngFile} -t neutral -b transparent`, (error, stdout, stderr) => {
+    // Puppeteerに--no-sandboxオプションを追加（Railwayなどのクラウド環境用）
+    exec(`npx mmdc -i ${tempMmdFile} -o ${outputPngFile} -t neutral -b transparent -p '{"args": ["--no-sandbox", "--disable-setuid-sandbox"]}'`, (error, stdout, stderr) => {
       // 一時Mermaidファイルを削除
       try {
         fs.unlinkSync(tempMmdFile);
