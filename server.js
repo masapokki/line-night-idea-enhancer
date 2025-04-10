@@ -6,6 +6,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
+const { exec } = require('child_process');
 require('dotenv').config();
 
 // 環境変数
@@ -15,6 +16,7 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN || 'YOUR_GITHUB_TOKEN';
 const GITHUB_REPO_OWNER = process.env.GITHUB_REPO_OWNER || 'YOUR_GITHUB_USERNAME';
 const GITHUB_REPO_NAME = process.env.GITHUB_REPO_NAME || 'YOUR_GITHUB_REPO_NAME';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'YOUR_OPENAI_API_KEY';
+const SERVER_URL = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 3000}`;
 
 // ユーザーの状態を保持するオブジェクト
 // key: userId, value: { pendingThinkingProcess: { analysis, evaluation, expansion, feasibility } }
@@ -40,6 +42,9 @@ app.use(bodyParser.json({
     req.rawBody = buf;
   }
 }));
+
+// 一時ファイル用のディレクトリを静的ファイルとして配信
+app.use('/temp', express.static(path.join(__dirname, 'temp')));
 
 // LINEメッセージ送信関数
 async function replyToUser(replyToken, messages) {
@@ -69,9 +74,17 @@ function ensureDataDirectory() {
       console.log('Creating data directory...');
       fs.mkdirSync(dataDir, { recursive: true });
     }
+    
+    // 一時ファイル用のディレクトリも作成
+    const tempDir = path.join(__dirname, 'temp');
+    if (!fs.existsSync(tempDir)) {
+      console.log('Creating temp directory...');
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
     return true;
   } catch (error) {
-    console.error('Error creating data directory:', error);
+    console.error('Error creating directories:', error);
     return false;
   }
 }
@@ -224,6 +237,176 @@ async function callOpenAI(model, messages, temperature = 0.7, maxTokens = null, 
   }
 }
 
+// テキストマインドマップをMermaid形式に変換する関数
+function convertTextMindmapToMermaid(textMindmap) {
+  const lines = textMindmap.split('\n');
+  let mermaidCode = 'graph TD;\n';
+  const nodeMap = new Map();
+  let nodeCounter = 0;
+  
+  // 各行を処理
+  lines.forEach(line => {
+    // インデントレベルを計算（スペースの数で判断）
+    const indentMatch = line.match(/^(\s*)/);
+    const indentLevel = indentMatch ? Math.floor(indentMatch[1].length / 2) : 0;
+    
+    // 行の内容を取得（インデントと記号を除去）
+    const contentMatch = line.match(/^[\s]*[*\-+]?\s*(.*)/);
+    if (!contentMatch || !contentMatch[1].trim()) return;
+    
+    const content = contentMatch[1].trim();
+    const nodeId = `node${nodeCounter++}`;
+    
+    // ノードを追加
+    mermaidCode += `  ${nodeId}["${content}"];\n`;
+    
+    // 親ノードとの関係を追加
+    if (indentLevel > 0) {
+      const parentLevel = indentLevel - 1;
+      // 親ノードを探す
+      for (const [id, data] of [...nodeMap.entries()].reverse()) {
+        if (data.level === parentLevel) {
+          mermaidCode += `  ${id} --> ${nodeId};\n`;
+          break;
+        }
+      }
+    }
+    
+    // ノード情報を保存
+    nodeMap.set(nodeId, { level: indentLevel, content });
+  });
+  
+  return mermaidCode;
+}
+
+// Mermaid形式から画像を生成する関数
+async function generateMindmapImage(mermaidCode) {
+  // 一時ディレクトリの作成（存在しない場合）
+  const tempDir = path.join(__dirname, 'temp');
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
+  
+  // 一時ファイルパスの生成
+  const timestamp = Date.now();
+  const tempMmdFile = path.join(tempDir, `mindmap_${timestamp}.mmd`);
+  const outputPngFile = path.join(tempDir, `mindmap_${timestamp}.png`);
+  
+  // Mermaidコードを一時ファイルに書き込む
+  fs.writeFileSync(tempMmdFile, mermaidCode);
+  
+  // mmdc CLIを使用してPNG画像を生成
+  return new Promise((resolve, reject) => {
+    exec(`npx mmdc -i ${tempMmdFile} -o ${outputPngFile} -t neutral -b transparent`, (error, stdout, stderr) => {
+      // 一時Mermaidファイルを削除
+      try {
+        fs.unlinkSync(tempMmdFile);
+      } catch (err) {
+        console.error(`Error deleting temporary mermaid file: ${err.message}`);
+      }
+      
+      if (error) {
+        console.error(`Error generating mindmap: ${error.message}`);
+        reject(error);
+        return;
+      }
+      
+      resolve(outputPngFile);
+    });
+  });
+}
+
+// マインドマップ画像をLINEに送信する関数
+async function sendMindmapImageToLine(userId, imagePath) {
+  try {
+    // 画像のURLを生成
+    const imageUrl = `${SERVER_URL}/temp/${path.basename(imagePath)}`;
+    
+    // LINEに画像を送信
+    await axios.post('https://api.line.me/v2/bot/message/push', {
+      to: userId,
+      messages: [
+        {
+          type: 'image',
+          originalContentUrl: imageUrl,
+          previewImageUrl: imageUrl
+        }
+      ]
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+      }
+    });
+    
+    console.log('Mindmap image sent successfully');
+    return true;
+  } catch (error) {
+    console.error('Error sending mindmap image:', error);
+    return false;
+  }
+}
+
+// マインドマップを生成する関数
+async function generateMindmap(ideaContent) {
+  try {
+    const mindmap = await callOpenAI(
+      "gpt-4o",
+      [
+        { 
+          role: "system", 
+          content: "あなたはアイデアからテキスト形式のマインドマップを作成するアシスタントです。中心となるアイデアから派生する概念を階層的に表現してください。簡潔に作成してください。" 
+        },
+        { 
+          role: "user", 
+          content: `以下のアイデアからテキスト形式のマインドマップを作成してください。階層はインデントで表現し、各項目の前には記号（例：*、-、+など）を付けてください：\n\n${ideaContent}` 
+        }
+      ],
+      0.7,
+      800
+    );
+    
+    // メモリ解放のためのガベージコレクションを促進
+    global.gc && global.gc();
+    
+    return mindmap;
+  } catch (error) {
+    console.error('Error generating mindmap:', error);
+    return `マインドマップの生成中にエラーが発生しました。エラー: ${error.message}`;
+  }
+}
+
+// マインドマップを生成して画像として送信する関数
+async function generateAndSendMindmapImage(userId, textMindmap) {
+  try {
+    // テキストマインドマップをMermaid形式に変換
+    const mermaidCode = convertTextMindmapToMermaid(textMindmap);
+    
+    // Mermaid形式から画像を生成
+    const imagePath = await generateMindmapImage(mermaidCode);
+    
+    // 画像をLINEに送信
+    await sendMindmapImageToLine(userId, imagePath);
+    
+    // 一定時間後に一時ファイルを削除
+    setTimeout(() => {
+      try {
+        if (fs.existsSync(imagePath)) {
+          fs.unlinkSync(imagePath);
+          console.log(`Temporary file ${imagePath} deleted`);
+        }
+      } catch (err) {
+        console.error(`Error deleting temporary file: ${err.message}`);
+      }
+    }, 3600000); // 1時間後に削除
+    
+    return true;
+  } catch (error) {
+    console.error('Error in mindmap image generation and sending:', error);
+    return false;
+  }
+}
+
 // アイデアをブラッシュアップする関数
 async function enhanceIdea(ideaContent) {
   try {
@@ -353,35 +536,6 @@ async function enhanceIdea(ideaContent) {
   }
 }
 
-// マインドマップを生成する関数
-async function generateMindmap(ideaContent) {
-  try {
-    const mindmap = await callOpenAI(
-      "gpt-4o",
-      [
-        { 
-          role: "system", 
-          content: "あなたはアイデアからテキスト形式のマインドマップを作成するアシスタントです。中心となるアイデアから派生する概念を階層的に表現してください。簡潔に作成してください。" 
-        },
-        { 
-          role: "user", 
-          content: `以下のアイデアからテキスト形式のマインドマップを作成してください。階層はインデントで表現し、各項目の前には記号（例：*、-、+など）を付けてください：\n\n${ideaContent}` 
-        }
-      ],
-      0.7,
-      800
-    );
-    
-    // メモリ解放のためのガベージコレクションを促進
-    global.gc && global.gc();
-    
-    return mindmap;
-  } catch (error) {
-    console.error('Error generating mindmap:', error);
-    return `マインドマップの生成中にエラーが発生しました。エラー: ${error.message}`;
-  }
-}
-
 // Webhookエンドポイント
 app.post('/webhook', async (req, res) => {
   // シグネチャ検証
@@ -446,7 +600,7 @@ app.post('/webhook', async (req, res) => {
           });
           
           console.log('Thinking process details sent successfully');
-          return;
+          return res.status(200).send('OK');
         }
         
         // 通常のアイデア処理
@@ -486,7 +640,7 @@ app.post('/webhook', async (req, res) => {
             text: `【最終ブラッシュアップ】\n${enhancedResult.finalEnhancement}`
           });
           
-          // マインドマップ
+          // マインドマップをテキストとして送信
           messages.push({
             type: 'text',
             text: `【マインドマップ】\n${mindmapContent}`
@@ -520,6 +674,7 @@ app.post('/webhook', async (req, res) => {
             }
           };
           
+          // メッセージを送信
           await axios.post('https://api.line.me/v2/bot/message/push', {
             to: userId,
             messages: messages
@@ -530,7 +685,16 @@ app.post('/webhook', async (req, res) => {
             }
           });
           
-          console.log('Results sent successfully');
+          console.log('Text results sent successfully');
+          
+          // マインドマップを画像として生成して送信
+          try {
+            console.log('Generating and sending mindmap image...');
+            await generateAndSendMindmapImage(userId, mindmapContent);
+          } catch (imageError) {
+            console.error('Error generating or sending mindmap image:', imageError);
+          }
+          
         } catch (error) {
           console.error('Error processing idea:', error);
           
