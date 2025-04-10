@@ -5,6 +5,7 @@ const { Octokit } = require('@octokit/rest');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const OpenAI = require('openai');
 require('dotenv').config();
 
 // 環境変数
@@ -13,6 +14,12 @@ const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || 'YOUR
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || 'YOUR_GITHUB_TOKEN';
 const GITHUB_REPO_OWNER = process.env.GITHUB_REPO_OWNER || 'YOUR_GITHUB_USERNAME';
 const GITHUB_REPO_NAME = process.env.GITHUB_REPO_NAME || 'YOUR_GITHUB_REPO_NAME';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'YOUR_OPENAI_API_KEY';
+
+// OpenAI APIクライアント
+const openai = new OpenAI({
+  apiKey: OPENAI_API_KEY
+});
 
 // GitHubクライアント
 const octokit = new Octokit({
@@ -68,7 +75,13 @@ function readDatabase() {
 // データベースファイルを保存する関数
 function saveDatabase(database) {
   try {
-    const dbPath = path.join(__dirname, 'data', 'database.json');
+    // data ディレクトリが存在しない場合は作成
+    const dataDir = path.join(__dirname, 'data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    
+    const dbPath = path.join(dataDir, 'database.json');
     fs.writeFileSync(dbPath, JSON.stringify(database, null, 2), 'utf8');
     return true;
   } catch (error) {
@@ -78,7 +91,7 @@ function saveDatabase(database) {
 }
 
 // GitHubにデータを保存する関数
-async function saveToGitHub(userId, content) {
+async function saveToGitHub(userId, content, enhancedContent, mindmapContent) {
   try {
     // ローカルデータベースを更新
     const database = readDatabase();
@@ -97,7 +110,18 @@ async function saveToGitHub(userId, content) {
       user_id: userId,
       content: content,
       created_at: new Date().toISOString(),
-      processed: false
+      processed: true // すでに処理済み
+    };
+    
+    // 結果を保存
+    const resultId = `result_${ideaId.slice(5)}`;
+    
+    database.results[resultId] = {
+      idea_id: ideaId,
+      enhanced_content: enhancedContent,
+      mindmap_content: mindmapContent,
+      created_at: new Date().toISOString(),
+      sent: true // すでに送信済み
     };
     
     // ローカルに保存
@@ -120,7 +144,7 @@ async function saveToGitHub(userId, content) {
         owner: GITHUB_REPO_OWNER,
         repo: GITHUB_REPO_NAME,
         path: 'data/database.json',
-        message: 'Add new idea',
+        message: 'Add new idea and result',
         content: encodedContent,
         sha: data.sha
       });
@@ -135,7 +159,7 @@ async function saveToGitHub(userId, content) {
           owner: GITHUB_REPO_OWNER,
           repo: GITHUB_REPO_NAME,
           path: 'data/database.json',
-          message: 'Create database and add new idea',
+          message: 'Create database and add new idea and result',
           content: encodedContent
         });
         
@@ -149,6 +173,46 @@ async function saveToGitHub(userId, content) {
   } catch (error) {
     console.error('Error saving to GitHub:', error);
     return false;
+  }
+}
+
+// アイデアをブラッシュアップする関数
+async function enhanceIdea(ideaContent) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        { role: "system", content: "あなたは創造的なアイデアを発展させるアシスタントです。ユーザーのアイデアを分析し、それを発展させ、より具体的で実用的なものにしてください。" },
+        { role: "user", content: `以下のアイデアをブラッシュアップしてください：\n\n${ideaContent}` }
+      ],
+      max_tokens: 1000,
+      temperature: 0.7
+    });
+    
+    return response.choices[0].message.content.trim();
+  } catch (error) {
+    console.error('Error enhancing idea:', error);
+    return `アイデアの処理中にエラーが発生しました。エラー: ${error.message}`;
+  }
+}
+
+// マインドマップを生成する関数
+async function generateMindmap(ideaContent) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        { role: "system", content: "あなたはアイデアからテキスト形式のマインドマップを作成するアシスタントです。中心となるアイデアから派生する概念を階層的に表現してください。" },
+        { role: "user", content: `以下のアイデアからテキスト形式のマインドマップを作成してください。階層はインデントで表現し、各項目の前には記号（例：*、-、+など）を付けてください：\n\n${ideaContent}` }
+      ],
+      max_tokens: 1500,
+      temperature: 0.7
+    });
+    
+    return response.choices[0].message.content.trim();
+  } catch (error) {
+    console.error('Error generating mindmap:', error);
+    return `マインドマップの生成中にエラーが発生しました。エラー: ${error.message}`;
   }
 }
 
@@ -185,21 +249,67 @@ app.post('/webhook', async (req, res) => {
         
         console.log(`Received message from ${userId}: ${messageText}`);
         
-        // アイデアとして保存
-        const saved = await saveToGitHub(userId, messageText);
+        // 処理中メッセージを送信
+        await replyToUser(replyToken, [{
+          type: 'text',
+          text: 'アイデアを処理中です。少々お待ちください...'
+        }]);
         
-        if (saved) {
-          // ユーザーに応答
-          await replyToUser(replyToken, [{
-            type: 'text',
-            text: 'アイデアを受け付けました。朝に処理結果をお送りします。'
-          }]);
-        } else {
-          // エラー応答
-          await replyToUser(replyToken, [{
-            type: 'text',
-            text: 'アイデアの保存に失敗しました。しばらくしてからもう一度お試しください。'
-          }]);
+        try {
+          // アイデアをブラッシュアップ
+          console.log('Enhancing idea...');
+          const enhancedContent = await enhanceIdea(messageText);
+          
+          // マインドマップを生成
+          console.log('Generating mindmap...');
+          const mindmapContent = await generateMindmap(messageText);
+          
+          // データを保存
+          console.log('Saving to GitHub...');
+          await saveToGitHub(userId, messageText, enhancedContent, mindmapContent);
+          
+          // 結果をLINEで送信
+          console.log('Sending results to LINE...');
+          await axios.post('https://api.line.me/v2/bot/message/push', {
+            to: userId,
+            messages: [
+              {
+                type: 'text',
+                text: `【元のアイデア】\n${messageText}`
+              },
+              {
+                type: 'text',
+                text: `【ブラッシュアップ】\n${enhancedContent}`
+              },
+              {
+                type: 'text',
+                text: `【マインドマップ】\n${mindmapContent}`
+              }
+            ]
+          }, {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+            }
+          });
+          
+          console.log('Results sent successfully');
+        } catch (error) {
+          console.error('Error processing idea:', error);
+          
+          // エラーメッセージを送信
+          await axios.post('https://api.line.me/v2/bot/message/push', {
+            to: userId,
+            messages: [{
+              type: 'text',
+              text: 'アイデアの処理中にエラーが発生しました。しばらくしてからもう一度お試しください。'
+            }]
+          }, {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+            }
+          });
         }
       }
     }
