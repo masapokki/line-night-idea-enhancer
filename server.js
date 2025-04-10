@@ -335,7 +335,24 @@ async function generateMindmapImage(mermaidCode) {
 async function sendMindmapImageToLine(userId, imagePath) {
   try {
     // 画像のURLを生成
-    const imageUrl = `${SERVER_URL}/temp/${path.basename(imagePath)}`;
+    // 注: SERVER_URLがhttpsで始まることを確認（LINEの要件）
+    let imageUrl = `${SERVER_URL}/temp/${path.basename(imagePath)}`;
+    
+    // URLがhttpsで始まっていない場合の処理
+    if (!imageUrl.startsWith('https://')) {
+      console.log(`Warning: Image URL does not start with https. Current URL: ${imageUrl}`);
+      
+      // Railwayの場合、自動的に割り当てられるURLを使用
+      if (process.env.RAILWAY_STATIC_URL) {
+        imageUrl = `https://${process.env.RAILWAY_STATIC_URL}/temp/${path.basename(imagePath)}`;
+        console.log(`Using Railway static URL: ${imageUrl}`);
+      } else {
+        console.log('No HTTPS URL available. Skipping image sending.');
+        return false;
+      }
+    }
+    
+    console.log(`Sending image with URL: ${imageUrl}`);
     
     // LINEに画像を送信
     await axios.post('https://api.line.me/v2/bot/message/push', {
@@ -358,6 +375,10 @@ async function sendMindmapImageToLine(userId, imagePath) {
     return true;
   } catch (error) {
     console.error('Error sending mindmap image:', error);
+    if (error.response) {
+      console.error('Response data:', error.response.data);
+      console.error('Response status:', error.response.status);
+    }
     return false;
   }
 }
