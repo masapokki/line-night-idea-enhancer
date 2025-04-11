@@ -27,7 +27,7 @@
       "user_id": "Uc77ef434cb30c4be7bab3a9c24b7203b",
       "content": "犯罪発生予測マップをつくりたい",
       "created_at": "2025-04-10T15:25:58.494Z",
-      "processed": false
+      "processed": true
     },
     "idea_20250410_500000": {
       "user_id": "Uc77ef434cb30c4be7bab3a9c24b7203b",
@@ -319,6 +319,13 @@
       "mindmap_content": "```\n* 犯罪発生予測マップ\n  * データ統合と解析\n    - 警察データ連携\n    - 社会経済データ統合\n    - リアルタイム更新\n  * 予測モデル\n    - 時系列解析\n    - 地理空間解析\n    - アルゴリズム最適化\n  * ユーザーインターフェース\n    - 色分けマップ\n    - 地域詳細情報\n    - モバイルアプリ\n  * プライバシーとセキュリティ\n    - データ匿名化\n    - 透明性確保\n  * 地域コミュニティ連携\n    - ワークショップ開催\n    - フィードバック収集\n```",
       "created_at": "2025-04-10T18:26:44.271Z",
       "sent": true
+    },
+    "result_20250410_400000": {
+      "idea_id": "idea_20250410_400000",
+      "enhanced_content": "アイデアの処理中にエラーが発生しました。エラー: You didn't provide an API key. You need to provide your API key in an Authorization header using Bearer auth (i.e. Authorization: Bearer YOUR_KEY), or as the password field (with blank username) if you're accessing the API from your browser and are prompted for a username and password. You can obtain an API key from https://platform.openai.com/account/api-keys.",
+      "mindmap_content": "マインドマップの生成中にエラーが発生しました。エラー: You didn't provide an API key. You need to provide your API key in an Authorization header using Bearer auth (i.e. Authorization: Bearer YOUR_KEY), or as the password field (with blank username) if you're accessing the API from your browser and are prompted for a username and password. You can obtain an API key from https://platform.openai.com/account/api-keys.",
+      "created_at": "2025-04-11T14:15:13.867299",
+      "sent": false
     }
   }
 }
