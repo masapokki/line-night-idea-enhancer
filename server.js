@@ -120,7 +120,7 @@ function saveDatabase(database) {
 }
 
 // GitHubにデータを保存する関数
-async function saveToGitHub(userId, content, enhancedResult, mindmapContent) {
+async function saveToGitHub(userId, content, enhancedResult, mindmapContent, imagePath = null) {
   try {
     // ローカルデータベースを更新
     const database = readDatabase();
@@ -154,7 +154,9 @@ async function saveToGitHub(userId, content, enhancedResult, mindmapContent) {
       enhanced_content: enhancedResult.finalEnhancement,
       mindmap_content: mindmapContent,
       created_at: new Date().toISOString(),
-      sent: true // すでに送信済み
+      sent: false, // 未送信（翌朝7時に送信）
+      mindmap_image_generated: imagePath ? true : false, // マインドマップ画像生成フラグ
+      mindmap_image_path: imagePath ? path.basename(imagePath) : null // マインドマップ画像のパス
     };
     
     // ローカルに保存
@@ -813,80 +815,43 @@ app.post('/webhook', async (req, res) => {
           console.log('Generating mindmap with enhanced results...');
           const mindmapContent = await generateMindmap(messageText, enhancedResult);
           
-          // データを保存
-          console.log('Saving to GitHub...');
-          await saveToGitHub(userId, messageText, enhancedResult, mindmapContent);
-          
-          // 結果をLINEで送信
-          console.log('Sending results to LINE...');
-          
-          // メッセージを作成（元のアイデア、最終ブラッシュアップ、マインドマップの順）
-          const messages = [
-            {
-              type: 'text',
-              text: `【元のアイデア】\n${messageText}`
-            }
-          ];
-          
-          // 最終ブラッシュアップ（長文の場合は分割）
-          const maxLength = 4000; // LINEの制限は5000文字だが、余裕を持たせる
-          const finalEnhancement = enhancedResult.finalEnhancement;
-          
-          if (finalEnhancement.length <= maxLength) {
-            // 通常のケース：1つのメッセージで送信
-            messages.push({
-              type: 'text',
-              text: `【最終ブラッシュアップ】\n${finalEnhancement}`
-            });
-          } else {
-            // 長文の場合：分割して送信
-            const part1 = finalEnhancement.substring(0, maxLength);
-            const part2 = finalEnhancement.substring(maxLength);
+          // マインドマップ画像を生成（送信はしない）
+          console.log('Generating mindmap image...');
+          try {
+            // テキストマインドマップをMermaid形式に変換
+            const mermaidCode = convertTextMindmapToMermaid(mindmapContent);
             
-            messages.push({
-              type: 'text',
-              text: `【最終ブラッシュアップ (1/2)】\n${part1}`
-            });
+            // Mermaid形式から画像を生成
+            const imagePath = await generateMindmapImage(mermaidCode);
             
-            messages.push({
-              type: 'text',
-              text: `【最終ブラッシュアップ (2/2)】\n${part2}`
-            });
+            // 画像のURLを生成
+            const imageUrl = `${SERVER_URL}/temp/${path.basename(imagePath)}`;
+            
+            // データを保存（マインドマップ画像のパスも保存）
+            console.log('Saving to GitHub...');
+            await saveToGitHub(userId, messageText, enhancedResult, mindmapContent, imagePath);
+            
+            // 一定時間後に一時ファイルを削除しない（翌朝の送信時に使用するため）
+          } catch (imageError) {
+            console.error('Error generating mindmap image:', imageError);
+            
+            // エラーが発生しても処理を続行（画像なしでデータを保存）
+            console.log('Saving to GitHub without mindmap image...');
+            await saveToGitHub(userId, messageText, enhancedResult, mindmapContent);
           }
           
-          // マインドマップのテキストは送信しない（画像のみ送信）
+          // 処理完了メッセージを送信
+          console.log('Sending completion message to LINE...');
           
-          // 詳細を見るボタン付きメッセージを追加（テンプレートメッセージを使用）
-          messages.push({
-            type: 'template',
-            altText: '思考プロセスの詳細を見る',
-            template: {
-              type: 'buttons',
-              text: '思考プロセスの詳細を見るにはボタンを押してください。',
-              actions: [
-                {
-                  type: 'message',
-                  label: '詳細を見る',
-                  text: '詳細を見る'
-                }
-              ]
-            }
-          });
-          
-          // ユーザーの状態を保存（思考プロセスを保持）
-          userStates[userId] = {
-            pendingThinkingProcess: {
-              analysis: enhancedResult.analysis,
-              evaluation: enhancedResult.evaluation,
-              expansion: enhancedResult.expansion,
-              feasibility: enhancedResult.feasibility
-            }
-          };
-          
-          // メッセージを送信
+          // 完了メッセージを送信
           await axios.post('https://api.line.me/v2/bot/message/push', {
             to: userId,
-            messages: messages
+            messages: [
+              {
+                type: 'text',
+                text: 'アイデアの処理が完了しました。結果は翌朝7時に送信されます。おやすみなさい。'
+              }
+            ]
           }, {
             headers: {
               'Content-Type': 'application/json',
@@ -894,15 +859,7 @@ app.post('/webhook', async (req, res) => {
             }
           });
           
-          console.log('Text results sent successfully');
-          
-          // マインドマップを画像として生成して送信
-          try {
-            console.log('Generating and sending mindmap image...');
-            await generateAndSendMindmapImage(userId, mindmapContent);
-          } catch (imageError) {
-            console.error('Error generating or sending mindmap image:', imageError);
-          }
+          console.log('Completion message sent successfully');
           
         } catch (error) {
           console.error('Error processing idea:', error);
@@ -934,6 +891,73 @@ app.post('/webhook', async (req, res) => {
 // ヘルスチェックエンドポイント
 app.get('/', (req, res) => {
   res.send('LINE Night Idea Enhancer is running!');
+});
+
+// マインドマップ画像生成・送信APIエンドポイント
+app.post('/api/generate-mindmap', async (req, res) => {
+  try {
+    // リクエストボディの検証
+    const { userId, mindmapContent, resultId } = req.body;
+    
+    if (!userId || !mindmapContent || !resultId) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+    }
+    
+    // マインドマップを画像として生成して送信
+    console.log(`Generating and sending mindmap image for user: ${userId}`);
+    
+    try {
+      // テキストマインドマップをMermaid形式に変換
+      const mermaidCode = convertTextMindmapToMermaid(mindmapContent);
+      
+      // Mermaid形式から画像を生成
+      const imagePath = await generateMindmapImage(mermaidCode);
+      
+      // 画像をLINEに送信
+      const success = await sendMindmapImageToLine(userId, imagePath);
+      
+      if (success) {
+        // データベースを更新（マインドマップ画像生成フラグをtrueに設定）
+        const database = readDatabase();
+        if (database.results[resultId]) {
+          database.results[resultId].mindmap_image_generated = true;
+          saveDatabase(database);
+          
+          // GitHubにも更新を反映
+          try {
+            const { data } = await octokit.repos.getContent({
+              owner: GITHUB_REPO_OWNER,
+              repo: GITHUB_REPO_NAME,
+              path: 'data/database.json'
+            });
+            
+            const encodedContent = Buffer.from(JSON.stringify(database, null, 2)).toString('base64');
+            
+            await octokit.repos.createOrUpdateFileContents({
+              owner: GITHUB_REPO_OWNER,
+              repo: GITHUB_REPO_NAME,
+              path: 'data/database.json',
+              message: 'Update mindmap image generated status',
+              content: encodedContent,
+              sha: data.sha
+            });
+          } catch (error) {
+            console.error('Error updating GitHub:', error);
+          }
+        }
+        
+        return res.status(200).json({ success: true, message: 'Mindmap image generated and sent successfully' });
+      } else {
+        return res.status(500).json({ error: 'Failed to send mindmap image' });
+      }
+    } catch (error) {
+      console.error('Error in mindmap image generation and sending:', error);
+      return res.status(500).json({ error: `Error generating or sending mindmap image: ${error.message}` });
+    }
+  } catch (error) {
+    console.error('Error in generate-mindmap endpoint:', error);
+    return res.status(500).json({ error: `Internal server error: ${error.message}` });
+  }
 });
 
 // サーバー起動

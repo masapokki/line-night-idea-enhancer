@@ -2,6 +2,7 @@ import os
 import json
 import base64
 import requests
+import time
 from datetime import datetime
 
 # 環境変数
@@ -9,6 +10,34 @@ GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN')
 GITHUB_REPO_OWNER = os.environ.get('GITHUB_REPOSITORY', '').split('/')[0]
 GITHUB_REPO_NAME = os.environ.get('GITHUB_REPOSITORY', '').split('/')[-1]
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
+SERVER_URL = os.environ.get('SERVER_URL', 'http://localhost:3000')
+
+# マインドマップ画像を生成して送信するAPIを呼び出す関数
+def generate_and_send_mindmap(user_id, mindmap_content, result_id):
+    try:
+        print(f"Calling API to generate and send mindmap for user: {user_id}")
+        
+        # APIエンドポイントを呼び出す
+        response = requests.post(
+            f"{SERVER_URL}/api/generate-mindmap",
+            json={
+                'userId': user_id,
+                'mindmapContent': mindmap_content,
+                'resultId': result_id
+            },
+            timeout=60  # タイムアウトを60秒に設定
+        )
+        
+        if response.status_code == 200:
+            print("Mindmap image generated and sent successfully")
+            return True
+        else:
+            print(f"Error generating mindmap image: {response.status_code}")
+            print(response.text)
+            return False
+    except Exception as e:
+        print(f"Exception generating mindmap image: {e}")
+        return False
 
 # GitHubからデータベースを取得
 def get_database():
@@ -151,30 +180,120 @@ def main():
         # マインドマップ
         mindmap_content = result_data.get('mindmap_content', '')
         
+        # 最大メッセージ長（LINEの制限は5000文字だが、余裕を持たせる）
+        max_length = 4000
+        
         # LINEメッセージを作成
         messages = [
             {
                 'type': 'text',
                 'text': f"おはようございます！昨晩のアイデアを処理しました。\n\n【元のアイデア】\n{original_idea}"
-            },
-            {
-                'type': 'text',
-                'text': f"【ブラッシュアップ】\n{enhanced_content}"
-            },
-            {
-                'type': 'text',
-                'text': f"【マインドマップ】\n{mindmap_content}"
             }
         ]
         
+        # ブラッシュアップ（長文の場合は分割）
+        if len(enhanced_content) <= max_length:
+            # 通常のケース：1つのメッセージで送信
+            messages.append({
+                'type': 'text',
+                'text': f"【最終ブラッシュアップ】\n{enhanced_content}"
+            })
+        else:
+            # 長文の場合：分割して送信
+            part1 = enhanced_content[:max_length]
+            part2 = enhanced_content[max_length:]
+            
+            messages.append({
+                'type': 'text',
+                'text': f"【最終ブラッシュアップ (1/2)】\n{part1}"
+            })
+            
+            messages.append({
+                'type': 'text',
+                'text': f"【最終ブラッシュアップ (2/2)】\n{part2}"
+            })
+        
+        # 詳細を見るボタン付きメッセージを追加
+        messages.append({
+            'type': 'template',
+            'altText': '思考プロセスの詳細を見る',
+            'template': {
+                'type': 'buttons',
+                'text': '思考プロセスの詳細を見るにはボタンを押してください。',
+                'actions': [
+                    {
+                        'type': 'message',
+                        'label': '詳細を見る',
+                        'text': '詳細を見る'
+                    }
+                ]
+            }
+        })
+        
         # LINEにメッセージを送信
         if send_line_message(user_id, messages):
-            print(f"Successfully sent notification to user: {user_id}")
+            print(f"Successfully sent text notification to user: {user_id}")
+            
+            # マインドマップ画像を送信（最終ブラッシュアップ案の後に送信される）
+            if mindmap_content:
+                # すでに生成されたマインドマップ画像がある場合
+                if result_data.get('mindmap_image_path'):
+                    print(f"Sending pre-generated mindmap image for user: {user_id}")
+                    
+                    # 少し待機してからマインドマップ画像を送信（LINEのレート制限対策）
+                    time.sleep(1)
+                    
+                    # 画像のURLを生成
+                    image_path = result_data.get('mindmap_image_path')
+                    image_url = f"{SERVER_URL}/temp/{image_path}"
+                    
+                    # LINEに画像を送信
+                    try:
+                        response = requests.post(
+                            'https://api.line.me/v2/bot/message/push',
+                            json={
+                                'to': user_id,
+                                'messages': [
+                                    {
+                                        'type': 'image',
+                                        'originalContentUrl': image_url,
+                                        'previewImageUrl': image_url
+                                    }
+                                ]
+                            },
+                            headers={
+                                'Content-Type': 'application/json',
+                                'Authorization': f'Bearer {LINE_CHANNEL_ACCESS_TOKEN}'
+                            }
+                        )
+                        
+                        if response.status_code == 200:
+                            print(f"Successfully sent pre-generated mindmap image to user: {user_id}")
+                            database['results'][result_id]['mindmap_image_generated'] = True
+                        else:
+                            print(f"Failed to send pre-generated mindmap image to user: {user_id}")
+                            print(f"Error: {response.status_code} - {response.text}")
+                    except Exception as e:
+                        print(f"Exception sending pre-generated mindmap image: {e}")
+                
+                # マインドマップ画像がない場合は、APIを呼び出して生成・送信
+                elif not result_data.get('mindmap_image_generated', False):
+                    print(f"Generating and sending mindmap image for user: {user_id}")
+                    
+                    # 少し待機してからマインドマップ画像を生成して送信（LINEのレート制限対策）
+                    time.sleep(1)
+                    
+                    # マインドマップ画像を生成して送信（最終ブラッシュアップ案とともに送信される）
+                    if generate_and_send_mindmap(user_id, mindmap_content, result_id):
+                        print(f"Successfully sent mindmap image to user: {user_id}")
+                        database['results'][result_id]['mindmap_image_generated'] = True
+                    else:
+                        print(f"Failed to send mindmap image to user: {user_id}")
             
             # 送信済みにマーク
             database['results'][result_id]['sent'] = True
         else:
-            print(f"Failed to send notification to user: {user_id}")
+            print(f"Failed to send text notification to user: {user_id}")
     
     # データベースを更新
     if update_database(database, sha):
